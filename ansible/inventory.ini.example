@@ -1,0 +1,2 @@
+[app]
+app-server ansible_host=<public-ip> ansible_user=ubuntu ansible_port=22

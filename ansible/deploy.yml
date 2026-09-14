@@ -1,0 +1,82 @@
+---
+- name: Deploy the application
+  hosts: app
+  become: true
+
+  tasks:
+    - name: Deploy the application container
+      ansible.builtin.include_role:
+        name: deploy
+
+    - name: Check whether the TLS certificate already exists
+      ansible.builtin.stat:
+        path: "/etc/letsencrypt/live/{{ deploy_domain }}/fullchain.pem"
+      register: tls_certificate
+
+    - name: Configure Nginx for the initial certificate request
+      ansible.builtin.include_role:
+        name: geerlingguy.nginx
+      vars:
+        nginx_vhosts: "{{ nginx_application_vhosts }}"
+        nginx_tls_enabled: false
+      when: not tls_certificate.stat.exists
+
+    - name: Apply the initial Nginx configuration
+      ansible.builtin.meta: flush_handlers
+      when: not tls_certificate.stat.exists
+
+    - name: Install Certbot and obtain the TLS certificate
+      ansible.builtin.include_role:
+        name: geerlingguy.certbot
+
+    - name: Create the Certbot deploy hook directory
+      ansible.builtin.file:
+        path: /etc/letsencrypt/renewal-hooks/deploy
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Reload Nginx after certificate renewal
+      ansible.builtin.copy:
+        dest: /etc/letsencrypt/renewal-hooks/deploy/reload-nginx
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          set -eu
+          nginx -t
+          systemctl reload nginx
+
+    - name: Configure Nginx with HTTPS
+      ansible.builtin.include_role:
+        name: geerlingguy.nginx
+      vars:
+        nginx_vhosts: "{{ nginx_application_vhosts }}"
+        nginx_tls_enabled: true
+
+    - name: Apply pending Nginx configuration changes
+      ansible.builtin.meta: flush_handlers
+
+    - name: Verify the HTTP to HTTPS redirect
+      ansible.builtin.uri:
+        url: "http://{{ deploy_bind_address }}:{{ nginx_http_port }}/"
+        method: GET
+        headers:
+          Host: "{{ deploy_domain }}"
+        follow_redirects: none
+        status_code: 301
+        timeout: 5
+      changed_when: false
+
+    - name: Verify the HTTPS reverse proxy
+      ansible.builtin.uri:
+        url: "https://{{ deploy_bind_address }}:{{ nginx_https_port }}/"
+        method: GET
+        headers:
+          Host: "{{ deploy_domain }}"
+        validate_certs: false
+        status_code: 200
+        timeout: 5
+      changed_when: false

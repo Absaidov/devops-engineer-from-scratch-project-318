@@ -1,0 +1,63 @@
+---
+deploy_domain: uit14.ru
+deploy_domains:
+  - "{{ deploy_domain }}"
+  - "www.{{ deploy_domain }}"
+deploy_bind_address: 127.0.0.1
+deploy_ssh_port: 22
+deploy_application_port: 8080
+deploy_management_port: 9090
+deploy_spring_profile: prod
+nginx_http_port: 80
+nginx_https_port: 443
+
+deploy_registry_url: cr.yandex
+deploy_registry_username: json_key
+deploy_image_repository: cr.yandex/crphrkv4imihhuukiv7q/project-devops-deploy
+deploy_image_tag: a100ed36995989034cee26c2cfd9e1558201bdaa
+deploy_image: "{{ deploy_image_repository }}:{{ deploy_image_tag }}"
+
+deploy_db_host: rc1a-ths7ptdlvrtqlvfl.mdb.yandexcloud.net
+deploy_db_port: 6432
+deploy_db_name: bulletins
+deploy_db_ssl_mode: disable
+deploy_db_url: >-
+  jdbc:postgresql://{{ deploy_db_host }}:{{ deploy_db_port }}/{{ deploy_db_name }}?sslmode={{ deploy_db_ssl_mode }}
+
+deploy_s3_bucket: uit14-bulletins-images
+deploy_s3_region: ru-central1
+deploy_s3_endpoint: https://storage.yandexcloud.net
+
+nginx_remove_default_vhost: true
+nginx_server_tokens: "off"
+nginx_client_max_body_size: 10m
+nginx_proxy_cache_path: >-
+  /var/cache/nginx levels=1:2 keys_zone=static_cache:10m
+  max_size=200m inactive=7d use_temp_path=off
+nginx_application_vhosts:
+  - server_name: "{{ deploy_domains | join(' ') }}"
+    filename: project-devops-deploy.conf
+    template: "{{ playbook_dir }}/templates/project-devops-deploy.conf.j2"
+  - server_name: "{{ deploy_domains | join(' ') }}"
+    filename: project-devops-deploy-https.conf
+    state: absent
+
+certbot_install_method: package
+certbot_create_if_missing: true
+certbot_create_method: webroot
+certbot_webroot: /var/www/letsencrypt
+certbot_auto_renew: true
+certbot_auto_renew_user: root
+certbot_auto_renew_hour: "3"
+certbot_auto_renew_minute: "30"
+certbot_auto_renew_options: "--quiet"
+certbot_create_command: >-
+  {{ certbot_script }} certonly --webroot
+  --webroot-path {{ cert_item.webroot | default(certbot_webroot) }}
+  --noninteractive --agree-tos --register-unsafely-without-email
+  --cert-name {{ cert_item_name }}
+  -d {{ cert_item.domains | join(',') }}
+certbot_certs:
+  - name: "{{ deploy_domain }}"
+    webroot: "{{ certbot_webroot }}"
+    domains: "{{ deploy_domains }}"

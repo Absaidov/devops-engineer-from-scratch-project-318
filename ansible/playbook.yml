@@ -1,0 +1,58 @@
+---
+- name: Prepare application server
+  hosts: app
+  become: true
+
+  tasks:
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose
+          - git
+          - curl
+          - python3-requests
+          - ufw
+        state: present
+        update_cache: true
+
+    - name: Start and enable Docker
+      ansible.builtin.systemd_service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add SSH user to docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+
+    - name: Allow SSH
+      community.general.ufw:
+        rule: allow
+        port: "{{ deploy_ssh_port }}"
+        proto: tcp
+
+    - name: Allow HTTP and HTTPS
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - "{{ nginx_http_port }}"
+        - "{{ nginx_https_port }}"
+
+    - name: Deny incoming traffic by default
+      community.general.ufw:
+        direction: incoming
+        policy: deny
+
+    - name: Allow outgoing traffic by default
+      community.general.ufw:
+        direction: outgoing
+        policy: allow
+
+    - name: Enable UFW
+      community.general.ufw:
+        state: enabled

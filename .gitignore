@@ -1,0 +1,17 @@
+.DS_Store
+._*
+
+# Local Ansible runtime files.
+ansible/inventory.ini
+*.retry
+.env
+
+# Vault passwords and service-account keys must never be committed.
+.vault_pass
+*.vault-pass
+authorized-key.json
+key.json
+
+# IDE settings.
+.idea/
+.vscode/
