@@ -63,11 +63,13 @@ PostgreSQL доступен только с внутреннего IP серве
 - пользователь с правами `sudo` без запроса пароля;
 - исходящий доступ к Container Registry, PostgreSQL и Object Storage;
 - открытые входящие TCP-порты `22`, `80` и `443`;
+- TCP-порты `9090` и `9100`, разрешённые только с внутреннего адреса сервера
+  мониторинга;
 - доступ к Managed PostgreSQL внутри облачной сети.
 
-Docker, Docker Compose, Git, cURL, UFW и Python-библиотека `requests`
-устанавливаются подготовительным playbook. Nginx и Certbot устанавливаются во
-время деплоя.
+Docker, Docker Compose, Git, cURL, UFW, Node Exporter, rsyslog и необходимые
+Python-библиотеки устанавливаются подготовительным playbook. Nginx и Certbot
+устанавливаются во время деплоя.
 
 ## Подготовка к запуску
 
@@ -84,6 +86,24 @@ cp ansible/inventory.ini.example ansible/inventory.ini
 `ansible/group_vars/app/vault.yml`. Структура переменных показана в
 `ansible/group_vars/app/vault.yml.example`. Пароль Vault, JSON-ключи и
 незашифрованные секреты хранить в репозитории нельзя.
+
+Для Basic Auth management endpoint создайте отдельный пароль:
+
+```bash
+ansible-vault encrypt_string --ask-vault-pass --name vault_monitoring_basic_auth_password
+```
+
+Введите новый пароль для пользователя мониторинга, завершите ввод сочетанием
+`Ctrl+D` и добавьте полученный YAML-блок в
+`ansible/group_vars/app/vault.yml`. Используйте тот же пароль Ansible Vault,
+которым уже зашифрованы остальные значения.
+
+Пока отдельного сервера мониторинга нет, параметр
+`monitoring_allowed_cidrs` в `ansible/group_vars/app/vars.yml` оставлен пустым:
+порты метрик недоступны извне. После создания сервера мониторинга добавьте туда
+его внутренний адрес с маской `/32`, например `192.168.1.30/32`, и разрешите
+тот же источник для TCP `9090` и `9100` в Security Group Yandex Cloud. Не
+открывайте эти порты для `0.0.0.0/0`.
 
 ## Команды
 
@@ -147,6 +167,14 @@ make health
 make logs
 ```
 
+Проверить доступность метрик приложения и Node Exporter с управляющего
+компьютера через Ansible:
+
+```bash
+make metrics
+make node-metrics
+```
+
 Playbook деплоя также автоматически ожидает успешный ответ
 `/actuator/health/readiness` перед настройкой Nginx и проверяет редирект с HTTP
 на HTTPS.
@@ -156,6 +184,73 @@ JSON-логи приложения сохраняются на сервере в
 контейнера. Данные приложения находятся в Managed PostgreSQL, а изображения —
 в Object Storage.
 
+## Node Exporter и метрики приложения
+
+Подготовительный playbook устанавливает Node Exporter как systemd-сервис и
+включает дополнительные коллекторы `systemd` и `processes`. Его endpoint —
+`http://<app-host>:9100/metrics`. Доступ к порту ограничивается UFW и Security
+Group адресом сервера мониторинга.
+
+Actuator внутри контейнера работает на порту `9090`, опубликованном на сервере
+только как `127.0.0.1:19090`. Nginx слушает management-порт `9090` и
+проксирует только следующие защищённые Basic Auth адреса:
+
+- `/actuator/prometheus`;
+- `/actuator/health`;
+- `/actuator/health/liveness`;
+- `/actuator/health/readiness`.
+
+Остальные Actuator endpoint, включая `/actuator/logfile`, через Nginx не
+доступны. Имя пользователя задаётся открытой переменной
+`monitoring_basic_auth_username`, пароль хранится только в Ansible Vault.
+
+### Обязательные метрики
+
+| Источник | Что контролируем | Метрики Prometheus |
+|---|---|---|
+| Node Exporter | CPU и load average | `node_cpu_seconds_total`, `node_load1`, `node_load5`, `node_load15` |
+| Node Exporter | Память | `node_memory_MemTotal_bytes`, `node_memory_MemAvailable_bytes` |
+| Node Exporter | Файловые системы | `node_filesystem_size_bytes`, `node_filesystem_avail_bytes` |
+| Node Exporter | Операции с дисками | `node_disk_read_bytes_total`, `node_disk_written_bytes_total` |
+| Node Exporter | Сеть | `node_network_receive_bytes_total`, `node_network_transmit_bytes_total` |
+| Node Exporter | Процессы | `node_procs_running`, `node_procs_blocked`, `node_processes_pids`, `node_processes_state` |
+| Node Exporter | Системные сервисы | `node_systemd_unit_state`, `node_systemd_service_restart_total` |
+| Node Exporter | Сам exporter | `node_exporter_build_info`, `node_scrape_collector_success` |
+| Приложение | Запуск и доступность | `process_uptime_seconds`, `application_started_time_seconds`, `application_ready_time_seconds` |
+| Приложение | CPU | `process_cpu_usage`, `system_cpu_usage`, `system_load_average_1m` |
+| Приложение | JVM и сборка мусора | `jvm_memory_used_bytes`, `jvm_gc_pause_seconds_count`, `jvm_gc_pause_seconds_sum` |
+| Приложение | HTTP-запросы | `http_server_requests_seconds_count`, `http_server_requests_seconds_sum`, `http_server_requests_seconds_bucket` |
+| Приложение | Пул соединений с БД | `hikaricp_connections_active`, `hikaricp_connections_pending`, `jdbc_connections_active` |
+| Приложение | События логирования | `logback_events_total` |
+
+### Проверка через curl
+
+На сервере приложения можно проверить оба экспортера локально:
+
+```bash
+ssh ubuntu@89.169.153.112
+curl --fail http://127.0.0.1:9100/metrics
+curl --fail http://127.0.0.1:19090/actuator/prometheus
+curl --fail http://127.0.0.1:19090/actuator/health/readiness
+```
+
+Проверка именно через Nginx на management-порту (команда запросит пароль
+Basic Auth):
+
+```bash
+curl --fail --user prometheus http://127.0.0.1:9090/actuator/prometheus
+curl --fail --user prometheus http://127.0.0.1:9090/actuator/health/readiness
+```
+
+С сервера мониторинга вместо `127.0.0.1` используется внутренний IP сервера
+приложения. Это сработает после добавления его `/32` в UFW и Security Group.
+
+Access-логи Nginx записываются в JSON по путям
+`/var/log/nginx/access-json.log` и
+`/var/log/nginx/management-access-json.log`. Нативный error log Nginx
+направляется в локальный syslog, а rsyslog преобразует каждую запись в JSON и
+сохраняет её в `/var/log/nginx/error-json.ndjson`.
+
 ## Структура Ansible
 
 Все Ansible-файлы находятся в директории `ansible/`:
@@ -163,6 +258,7 @@ JSON-логи приложения сохраняются на сервере в
 - `ansible/playbook.yml` — подготовка целевого сервера;
 - `ansible/deploy.yml` — деплой приложения, Nginx и HTTPS;
 - `ansible/roles/deploy/` — роль приложения и миграций;
+- `ansible/roles/node_exporter/` — установка и настройка Node Exporter;
 - `ansible/group_vars/app/vars.yml` — открытые параметры окружения;
 - `ansible/group_vars/app/vault.yml` — зашифрованные секреты;
 - `ansible/requirements.yml` — зафиксированные роли и коллекции;

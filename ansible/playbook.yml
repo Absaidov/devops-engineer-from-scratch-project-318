@@ -11,7 +11,11 @@
           - docker-compose
           - git
           - curl
+          - dbus
+          - logrotate
+          - python3-passlib
           - python3-requests
+          - rsyslog
           - ufw
         state: present
         update_cache: true
@@ -56,3 +60,28 @@
     - name: Enable UFW
       community.general.ufw:
         state: enabled
+
+    - name: Validate monitoring access ranges
+      ansible.builtin.assert:
+        that:
+          - monitoring_allowed_cidrs is sequence
+          - monitoring_allowed_cidrs is not string
+          - "'0.0.0.0/0' not in monitoring_allowed_cidrs"
+          - "'::/0' not in monitoring_allowed_cidrs"
+        fail_msg: >-
+          monitoring_allowed_cidrs must contain only trusted private CIDRs of
+          monitoring servers; public Internet ranges are forbidden.
+
+    - name: Allow the management proxy from monitoring servers
+      community.general.ufw:
+        rule: allow
+        direction: in
+        proto: tcp
+        port: "{{ monitoring_proxy_port | string }}"
+        from_ip: "{{ item }}"
+        comment: Prometheus application metrics
+      loop: "{{ monitoring_allowed_cidrs }}"
+
+    - name: Install and configure Node Exporter
+      ansible.builtin.include_role:
+        name: node_exporter

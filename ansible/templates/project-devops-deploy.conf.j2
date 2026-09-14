@@ -25,6 +25,27 @@
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 {% endmacro %}
+{% macro management_location(path) %}
+    location = {{ path }} {
+        satisfy all;
+        allow 127.0.0.1;
+{% for cidr in monitoring_allowed_cidrs %}
+        allow {{ cidr }};
+{% endfor %}
+        deny all;
+
+        auth_basic "Application monitoring";
+        auth_basic_user_file {{ monitoring_basic_auth_file }};
+
+        proxy_pass http://{{ deploy_bind_address }}:{{ deploy_management_backend_port }};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Authorization "";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+{% endmacro %}
 server {
     listen {{ nginx_http_port }} default_server;
 {% if nginx_listen_ipv6 %}
@@ -68,3 +89,19 @@ server {
 {{ proxy_locations() }}
 }
 {% endif %}
+
+server {
+    listen {{ monitoring_proxy_bind_address }}:{{ monitoring_proxy_port }} default_server;
+    server_name _;
+
+    access_log {{ nginx_management_access_log_path }} main;
+
+{{ management_location('/actuator/prometheus') }}
+{{ management_location('/actuator/health') }}
+{{ management_location('/actuator/health/liveness') }}
+{{ management_location('/actuator/health/readiness') }}
+
+    location / {
+        return 404;
+    }
+}

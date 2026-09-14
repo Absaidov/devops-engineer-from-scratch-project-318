@@ -1,2 +1,5 @@
 [app]
 app-server ansible_host=<public-ip> ansible_user=ubuntu ansible_port=22
+
+# Trusted monitoring CIDRs for ports 9090 and 9100 are configured in
+# group_vars/app/vars.yml. Use the monitoring server's private /32 address.

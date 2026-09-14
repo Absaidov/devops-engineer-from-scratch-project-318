@@ -8,11 +8,12 @@ DEPLOY_PLAYBOOK ?= $(ANSIBLE_DIR)/deploy.yml
 REQUIREMENTS_FILE ?= $(ANSIBLE_DIR)/requirements.yml
 APP_GROUP ?= app
 APP_URL ?= https://uit14.ru
-MANAGEMENT_PORT ?= 9090
+MANAGEMENT_BACKEND_PORT ?= 19090
+NODE_EXPORTER_PORT ?= 9100
 CONTAINER_NAME ?= project-devops-deploy
 IMAGE_TAG ?=
 
-.PHONY: install syntax prepare deploy rollback check health logs
+.PHONY: install syntax prepare deploy rollback check health metrics node-metrics logs
 
 install:
 	$(ANSIBLE_GALAXY) install -r $(REQUIREMENTS_FILE)
@@ -37,7 +38,13 @@ check:
 	@echo "Application endpoints are available at $(APP_URL)"
 
 health:
-	$(ANSIBLE) -i $(INVENTORY) $(APP_GROUP) --become -m ansible.builtin.uri -a "url=http://127.0.0.1:$(MANAGEMENT_PORT)/actuator/health/readiness method=GET status_code=200 timeout=5"
+	$(ANSIBLE) -i $(INVENTORY) $(APP_GROUP) --become -m ansible.builtin.uri -a "url=http://127.0.0.1:$(MANAGEMENT_BACKEND_PORT)/actuator/health/readiness method=GET status_code=200 timeout=5"
+
+metrics:
+	$(ANSIBLE) -i $(INVENTORY) $(APP_GROUP) --become -m ansible.builtin.uri -a "url=http://127.0.0.1:$(MANAGEMENT_BACKEND_PORT)/actuator/prometheus method=GET status_code=200 timeout=5"
+
+node-metrics:
+	$(ANSIBLE) -i $(INVENTORY) $(APP_GROUP) --become -m ansible.builtin.uri -a "url=http://127.0.0.1:$(NODE_EXPORTER_PORT)/metrics method=GET status_code=200 timeout=5"
 
 logs:
 	$(ANSIBLE) -i $(INVENTORY) $(APP_GROUP) --become -m ansible.builtin.command -a "docker logs --tail 100 $(CONTAINER_NAME)"

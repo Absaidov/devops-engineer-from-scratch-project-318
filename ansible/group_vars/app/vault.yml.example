@@ -13,3 +13,4 @@ vault_db_username: replace-with-database-user
 vault_db_password: replace-with-database-password
 vault_s3_access_key: replace-with-s3-access-key-id
 vault_s3_secret_key: replace-with-s3-secret-key
+vault_monitoring_basic_auth_password: replace-with-monitoring-password
