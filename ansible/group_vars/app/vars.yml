@@ -12,18 +12,19 @@ deploy_spring_profile: prod
 nginx_http_port: 80
 nginx_https_port: 443
 
-# Until a monitoring server is created, the list stays empty and UFW does not
-# permit remote access to the metrics ports. Later add only the private /32 of
-# the monitoring server and create equivalent rules in the Yandex Cloud
-# Security Group. Never use 0.0.0.0/0 or ::/0 here.
-monitoring_allowed_cidrs: []
+# The monitoring VM addresses are read from inventory. If the monitoring group
+# is not present yet, metrics stay closed to remote hosts.
+monitoring_allowed_cidrs: >-
+  {{
+    groups.get('monitoring', [])
+    | map('extract', hostvars, 'private_ip')
+    | map('regex_replace', '$', '/32')
+    | list
+  }}
 monitoring_proxy_bind_address: 0.0.0.0
-monitoring_proxy_port: 9090
-monitoring_basic_auth_username: prometheus
 monitoring_basic_auth_file: /etc/nginx/.htpasswd-monitoring
 
 node_exporter_listen_address: 0.0.0.0
-node_exporter_port: 9100
 node_exporter_enabled_collectors:
   - systemd
   - processes

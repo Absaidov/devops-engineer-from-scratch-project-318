@@ -11,7 +11,8 @@
 - [https://uit14.ru](https://uit14.ru)
 - [https://www.uit14.ru](https://www.uit14.ru)
 
-Публичный IP сервера: `89.169.153.112`.
+Публичный IP сервера приложения: `89.169.153.112`.
+Публичный IP сервера наблюдаемости: `111.88.251.148`.
 
 ## Приложение и Docker-образ
 
@@ -35,9 +36,10 @@ make docker-build
 
 ## Инфраструктура
 
-В Yandex Cloud уже подготовлены:
+Инфраструктура проекта в Yandex Cloud включает:
 
 - виртуальная машина с Ubuntu 24.04 LTS;
+- отдельная виртуальная машина для сервисов наблюдаемости;
 - Managed Service for PostgreSQL с базой `bulletins`;
 - закрытый бакет Object Storage `uit14-bulletins-images`;
 - Yandex Container Registry с образом приложения;
@@ -57,7 +59,7 @@ PostgreSQL доступен только с внутреннего IP серве
 - пароль от Ansible Vault;
 - доступ в интернет для установки ролей и коллекций Ansible.
 
-### Целевой сервер
+### Сервер приложения
 
 - Ubuntu 24.04 LTS, Python 3, `apt` и SSH;
 - пользователь с правами `sudo` без запроса пароля;
@@ -71,6 +73,18 @@ Docker, Docker Compose, Git, cURL, UFW, Node Exporter, rsyslog и необход
 Python-библиотеки устанавливаются подготовительным playbook. Nginx и Certbot
 устанавливаются во время деплоя.
 
+### Сервер наблюдаемости
+
+- отдельная ВМ с Ubuntu 24.04 LTS в той же облачной сети, что и приложение;
+- статический публичный IPv4 и приватный IPv4 этой ВМ;
+- Python 3, `apt`, SSH и пользователь с правами `sudo`;
+- входящий TCP-порт `22` для управления и `9090` для интерфейса Prometheus;
+- исходящий доступ к Docker Hub и к приватному IP приложения на TCP-портах
+  `9090` и `9100`.
+
+Docker, UFW, конфигурация и контейнер Prometheus устанавливаются playbook
+`ansible/prometheus.yml`.
+
 ## Подготовка к запуску
 
 После клонирования репозитория создайте локальный inventory:
@@ -79,13 +93,25 @@ Python-библиотеки устанавливаются подготовит�
 cp ansible/inventory.ini.example ansible/inventory.ini
 ```
 
-При необходимости измените IP и SSH-пользователя в `ansible/inventory.ini`.
-Этот локальный файл игнорируется Git.
+Заполните публичные и приватные адреса обеих ВМ:
 
-Настоящие секреты зашифрованы по отдельности в
-`ansible/group_vars/app/vault.yml`. Структура переменных показана в
-`ansible/group_vars/app/vault.yml.example`. Пароль Vault, JSON-ключи и
-незашифрованные секреты хранить в репозитории нельзя.
+```ini
+[app]
+app-server ansible_host=<app-public-ip> private_ip=<app-private-ip> ansible_user=ubuntu ansible_port=22
+
+[monitoring]
+monitoring-server ansible_host=<monitoring-public-ip> private_ip=<monitoring-private-ip> ansible_user=ubuntu ansible_port=22
+```
+
+`ansible_host` используется Ansible для SSH, а `private_ip` — для сбора метрик
+внутри облачной сети. Локальный `ansible/inventory.ini` игнорируется Git.
+
+Секреты приложения зашифрованы по отдельности в
+`ansible/group_vars/app/vault.yml`. Общий пароль, с которым Prometheus
+обращается к защищённому Actuator endpoint, находится в
+`ansible/group_vars/all/vault.yml`. Структура переменных показана в соседних
+файлах `vault.yml.example`. Пароль Vault, JSON-ключи и незашифрованные секреты
+хранить в репозитории нельзя.
 
 Для Basic Auth management endpoint создайте отдельный пароль:
 
@@ -95,15 +121,13 @@ ansible-vault encrypt_string --ask-vault-pass --name vault_monitoring_basic_auth
 
 Введите новый пароль для пользователя мониторинга, завершите ввод сочетанием
 `Ctrl+D` и добавьте полученный YAML-блок в
-`ansible/group_vars/app/vault.yml`. Используйте тот же пароль Ansible Vault,
+`ansible/group_vars/all/vault.yml`. Используйте тот же пароль Ansible Vault,
 которым уже зашифрованы остальные значения.
 
-Пока отдельного сервера мониторинга нет, параметр
-`monitoring_allowed_cidrs` в `ansible/group_vars/app/vars.yml` оставлен пустым:
-порты метрик недоступны извне. После создания сервера мониторинга добавьте туда
-его внутренний адрес с маской `/32`, например `192.168.1.30/32`, и разрешите
-тот же источник для TCP `9090` и `9100` в Security Group Yandex Cloud. Не
-открывайте эти порты для `0.0.0.0/0`.
+Список адресов, которым разрешено собирать метрики, формируется автоматически
+из приватных IP группы `monitoring` в inventory. В Security Group сервера
+приложения разрешите TCP `9090` и `9100` только с приватного IP сервера
+наблюдаемости `/32`. Не открывайте эти два порта для `0.0.0.0/0`.
 
 ## Команды
 
@@ -132,6 +156,18 @@ make prepare
 ```bash
 make deploy
 ```
+
+Подготовить ВМ наблюдаемости и развернуть Prometheus одной командой:
+
+```bash
+make monitoring-deploy
+```
+
+Команда устанавливает Docker и UFW, проверяет конфигурацию и alert rules через
+`promtool`, создаёт сеть `monitoring`, запускает контейнер и ожидает
+`up == 1` для всех настроенных таргетов. Перед запуском Prometheus тот же
+playbook обновляет UFW и management-конфигурацию Nginx на сервере приложения,
+используя приватный адрес группы `monitoring`. Повторный запуск идемпотентен.
 
 Развернуть новый образ по полному SHA коммита:
 
@@ -251,21 +287,100 @@ Access-логи Nginx записываются в JSON по путям
 направляется в локальный syslog, а rsyslog преобразует каждую запись в JSON и
 сохраняет её в `/var/log/nginx/error-json.ndjson`.
 
+## Сервер наблюдаемости: Prometheus
+
+Prometheus разворачивается отдельной ролью
+`ansible/roles/prometheus`. Используется зафиксированный Docker-образ
+`prom/prometheus:v3.14.0` и отдельная bridge-сеть `monitoring` для последующего
+подключения Grafana и Alertmanager.
+
+Данные и конфигурация разделены:
+
+- `/etc/prometheus` — сгенерированный `prometheus.yml`, alert rules и их тест;
+- `/var/lib/prometheus` — постоянные данные TSDB, переживающие замену
+  контейнера.
+
+Пароль Basic Auth извлекается из Vault в отдельный файл с ограниченными
+правами; в `prometheus.yml` хранится только путь к этому файлу.
+
+Список scrape jobs находится в
+`ansible/group_vars/monitoring/vars.yml`. Адрес приложения берётся из
+`private_ip` группы `app`, поэтому для добавления новой ВМ не требуется вручную
+править шаблон Prometheus.
+
+| Job | Target | Endpoint | Авторизация |
+|---|---|---|---|
+| `prometheus` | сам контейнер | `/metrics` | нет |
+| `node_exporter` | приватный IP приложения, порт `9100` | `/metrics` | ограничение по IP |
+| `application` | приватный IP приложения, порт `9090` | `/actuator/prometheus` | Basic Auth, пароль из Vault |
+
+Интерфейс и список scrape targets доступны по адресам:
+
+- [http://111.88.251.148:9090/graph](http://111.88.251.148:9090/graph)
+- [http://111.88.251.148:9090/targets](http://111.88.251.148:9090/targets)
+
+В интерфейсе выполните запрос:
+
+```promql
+up
+```
+
+Для jobs `prometheus`, `node_exporter` и `application` ожидается значение `1`.
+То же самое можно проверить с управляющего компьютера:
+
+```bash
+make prometheus-check
+```
+
+Проверить рабочую конфигурацию и unit-тест alert rule:
+
+```bash
+make prometheus-config-check
+```
+
+Посмотреть последние строки JSON-логов контейнера:
+
+```bash
+make prometheus-logs
+```
+
+Alert rule `TargetDown` срабатывает, если любой scrape target остаётся
+недоступным больше двух минут. Файл правила и тест для `promtool test rules`
+хранятся в роли вместе с кодом.
+
+На ВМ наблюдаемости Security Group должна разрешать только:
+
+- TCP `22` с доверенного публичного IP для SSH;
+- TCP `9090` с адресов, которым нужен интерфейс Prometheus;
+- исходящий трафик для загрузки пакетов и сбора метрик.
+
+Чтобы проверяющий мог открыть `/graph`, можно разрешить входящий TCP `9090` из
+`0.0.0.0/0`. В этом случае наружу открыт только сам сервис Prometheus. Для
+закрытого варианта укажите публичные `/32` проверяющего и управляющего
+компьютера. Опубликованные Docker-порты могут обходить правила UFW, поэтому
+Security Group Yandex Cloud остаётся обязательной границей доступа. Не
+прикрепляйте одновременно разрешающую всё Security Group.
+
 ## Структура Ansible
 
 Все Ansible-файлы находятся в директории `ansible/`:
 
 - `ansible/playbook.yml` — подготовка целевого сервера;
 - `ansible/deploy.yml` — деплой приложения, Nginx и HTTPS;
+- `ansible/prometheus.yml` — подготовка ВМ наблюдаемости и деплой Prometheus;
+- `ansible/prometheus-check.yml` — проверка конфигурации и scrape targets;
 - `ansible/roles/deploy/` — роль приложения и миграций;
 - `ansible/roles/node_exporter/` — установка и настройка Node Exporter;
+- `ansible/roles/prometheus/` — конфигурация, правила и контейнер Prometheus;
+- `ansible/group_vars/all/` — общие настройки и зашифрованный пароль метрик;
 - `ansible/group_vars/app/vars.yml` — открытые параметры окружения;
+- `ansible/group_vars/monitoring/vars.yml` — параметры и scrape targets;
 - `ansible/group_vars/app/vault.yml` — зашифрованные секреты;
 - `ansible/requirements.yml` — зафиксированные роли и коллекции;
 - `ansible/templates/` — Jinja2-шаблон Nginx.
 
-Подготовительный и основной playbook идемпотентны: повторный запуск применяет
-только отсутствующие изменения. Контейнер приложения настроен с политикой
+Все playbook идемпотентны: повторный запуск применяет только отсутствующие
+изменения. Контейнеры приложения и Prometheus настроены с политикой
 перезапуска `unless-stopped`.
 
 ## Ссылки

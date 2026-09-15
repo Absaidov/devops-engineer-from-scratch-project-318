@@ -1,0 +1,54 @@
+---
+prometheus_image: prom/prometheus:v3.14.0
+prometheus_container_name: prometheus
+prometheus_network_name: monitoring
+prometheus_container_port: 9090
+prometheus_container_uid: "65534"
+prometheus_container_gid: "65534"
+prometheus_config_filename: prometheus.yml
+prometheus_rules_filename: alert.rules.yml
+prometheus_rules_test_filename: alert.rules.test.yml
+
+prometheus_config_dir: /etc/prometheus
+prometheus_data_dir: /var/lib/prometheus
+prometheus_config_path: >-
+  {{ prometheus_config_dir }}/{{ prometheus_config_filename }}
+prometheus_rules_dir: "{{ prometheus_config_dir }}/rules"
+prometheus_rules_path: >-
+  {{ prometheus_rules_dir }}/{{ prometheus_rules_filename }}
+prometheus_rules_test_path: >-
+  {{ prometheus_rules_dir }}/{{ prometheus_rules_test_filename }}
+prometheus_secrets_dir: "{{ prometheus_config_dir }}/secrets"
+prometheus_application_password_path: >-
+  {{ prometheus_secrets_dir }}/application-basic-auth-password
+
+prometheus_bind_address: 0.0.0.0
+prometheus_port: 9090
+prometheus_ssh_port: 22
+prometheus_ui_allowed_cidrs:
+  - 0.0.0.0/0
+
+prometheus_scrape_interval: 15s
+prometheus_evaluation_interval: 15s
+prometheus_retention_time: 15d
+prometheus_readiness_retries: 30
+prometheus_readiness_delay: 2
+
+# All scrape targets are generated from inventory and shared group variables.
+# Add future Nginx exporter and Loki-related jobs to this list.
+prometheus_scrape_jobs:
+  - job_name: prometheus
+    metrics_path: /metrics
+    targets:
+      - "127.0.0.1:{{ prometheus_container_port }}"
+  - job_name: node_exporter
+    metrics_path: /metrics
+    targets:
+      - >-
+        {{ hostvars[groups['app'][0]].private_ip }}:{{ node_exporter_port }}
+  - job_name: application
+    metrics_path: /actuator/prometheus
+    basic_auth: true
+    targets:
+      - >-
+        {{ hostvars[groups['app'][0]].private_ip }}:{{ monitoring_proxy_port }}
