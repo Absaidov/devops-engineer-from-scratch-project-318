@@ -78,12 +78,13 @@ Python-библиотеки устанавливаются подготовит�
 - отдельная ВМ с Ubuntu 24.04 LTS в той же облачной сети, что и приложение;
 - статический публичный IPv4 и приватный IPv4 этой ВМ;
 - Python 3, `apt`, SSH и пользователь с правами `sudo`;
-- входящий TCP-порт `22` для управления и `9090` для интерфейса Prometheus;
+- входящий TCP-порт `22` для управления, `9090` для интерфейса Prometheus и
+  `3000` для интерфейса Grafana;
 - исходящий доступ к Docker Hub и к приватному IP приложения на TCP-портах
   `9090` и `9100`.
 
-Docker, UFW, конфигурация и контейнер Prometheus устанавливаются playbook
-`ansible/prometheus.yml`.
+Docker, UFW, конфигурация и контейнеры Prometheus и Grafana устанавливаются
+командой `make monitoring-deploy`.
 
 ## Подготовка к запуску
 
@@ -124,6 +125,19 @@ ansible-vault encrypt_string --ask-vault-pass --name vault_monitoring_basic_auth
 `ansible/group_vars/all/vault.yml`. Используйте тот же пароль Ansible Vault,
 которым уже зашифрованы остальные значения.
 
+Пароль администратора Grafana хранится в
+`ansible/group_vars/monitoring/vault.yml`. Создайте его командой:
+
+```bash
+ansible-vault encrypt_string --ask-vault-pass --prompt
+```
+
+В строке `Variable name` укажите `vault_grafana_admin_password`, затем
+введите придуманный пароль администратора Grafana. Для шифрования используйте
+тот же пароль Ansible Vault. Полученный YAML-блок добавьте в
+`ansible/group_vars/monitoring/vault.yml`. Открытое значение пароля и файл с
+паролем расшифровки добавлять в репозиторий нельзя.
+
 Список адресов, которым разрешено собирать метрики, формируется автоматически
 из приватных IP группы `monitoring` в inventory. В Security Group сервера
 приложения разрешите TCP `9090` и `9100` только с приватного IP сервера
@@ -157,17 +171,19 @@ make prepare
 make deploy
 ```
 
-Подготовить ВМ наблюдаемости и развернуть Prometheus одной командой:
+Подготовить ВМ наблюдаемости и развернуть Prometheus с Grafana одной командой:
 
 ```bash
 make monitoring-deploy
 ```
 
 Команда устанавливает Docker и UFW, проверяет конфигурацию и alert rules через
-`promtool`, создаёт сеть `monitoring`, запускает контейнер и ожидает
-`up == 1` для всех настроенных таргетов. Перед запуском Prometheus тот же
-playbook обновляет UFW и management-конфигурацию Nginx на сервере приложения,
-используя приватный адрес группы `monitoring`. Повторный запуск идемпотентен.
+`promtool`, создаёт сеть `monitoring`, запускает контейнеры и ожидает
+`up == 1` для всех настроенных таргетов. Она также применяет provisioning
+datasource'ов и дашбордов Grafana, поэтому этой же командой обновляются
+дашборды после изменения их JSON-файлов. Перед запуском Prometheus playbook
+обновляет UFW и management-конфигурацию Nginx на сервере приложения, используя
+приватный адрес группы `monitoring`. Повторный запуск идемпотентен.
 
 Развернуть новый образ по полному SHA коммита:
 
@@ -352,6 +368,7 @@ Alert rule `TargetDown` срабатывает, если любой scrape targe
 
 - TCP `22` с доверенного публичного IP для SSH;
 - TCP `9090` с адресов, которым нужен интерфейс Prometheus;
+- TCP `3000` с адресов, которым нужен интерфейс Grafana;
 - исходящий трафик для загрузки пакетов и сбора метрик.
 
 Чтобы проверяющий мог открыть `/graph`, можно разрешить входящий TCP `9090` из
@@ -361,26 +378,108 @@ Alert rule `TargetDown` срабатывает, если любой scrape targe
 Security Group Yandex Cloud остаётся обязательной границей доступа. Не
 прикрепляйте одновременно разрешающую всё Security Group.
 
+## Grafana: визуализация метрик
+
+Grafana работает на той же ВМ, что и Prometheus, и подключена к общей
+Docker-сети `monitoring`. Интерфейс доступен по адресу:
+
+- [http://111.88.251.148:3000](http://111.88.251.148:3000)
+
+Имя администратора — `admin`. Пароль находится только в Ansible Vault в
+переменной `vault_grafana_admin_password` и в README не публикуется.
+
+Данные Grafana сохраняются в `/var/lib/grafana`, provisioning-файлы — в
+`/etc/grafana/provisioning`, а исходные JSON-файлы дашбордов — в
+`/etc/grafana/dashboards`. Эти каталоги подключаются к контейнеру отдельными
+bind mounts, поэтому база Grafana переживает замену контейнера, а конфигурация
+остаётся управляемой Ansible.
+
+Datasource'ы создаются автоматически с помощью provisioning YAML:
+
+- `Prometheus` обращается к `http://prometheus:9090` внутри Docker-сети и
+  используется по умолчанию;
+- `Loki` заранее настроен на `http://loki:3100`. До развёртывания Loki этот
+  datasource может отображаться как недоступный — это ожидаемое состояние.
+
+Provisioning создаёт три дашборда:
+
+| UID | Назначение |
+|---|---|
+| `system-overview` | CPU, load average, память, файловые системы и сеть сервера приложения |
+| `application-overview` | доступность приложения, uptime, CPU процесса и память JVM |
+| `http-performance` | частота HTTP-ответов по label `status` и перцентили p50, p95, p99 |
+
+Дашборды используют переменные `$job` и `$instance`. Панель кодов ответа
+строится на `http_server_requests_seconds_count` с группировкой по `status`, а
+latency — через `histogram_quantile()` по
+`http_server_requests_seconds_bucket`.
+
+Развернуть или обновить Grafana и provisioned dashboards:
+
+```bash
+make grafana-update
+```
+
+Эта цель вызывает общий идемпотентный `make monitoring-deploy`, поэтому
+Prometheus остаётся работающим, а Grafana перезапускается только при реальном
+изменении конфигурации, пароля или JSON-файлов дашбордов.
+
+Проверить health API Grafana, datasource Prometheus и наличие трёх дашбордов:
+
+```bash
+make grafana-check
+```
+
+Посмотреть последние строки логов контейнера Grafana:
+
+```bash
+make grafana-logs
+```
+
+В Security Group ВМ наблюдаемости разрешите входящий TCP `3000` с доверенного
+публичного адреса `/32`. Если интерфейс должен открыть наставник с заранее
+неизвестного адреса, порт можно временно разрешить для `0.0.0.0/0`, а после
+проверки снова ограничить. На сервере приложения порт `3000` открывать не
+нужно.
+
+### Скриншоты дашбордов
+
+Системные ресурсы:
+
+![Grafana System Overview](assets/grafana-system-overview.png)
+
+Состояние приложения:
+
+![Grafana Application Overview](assets/grafana-application-overview.png)
+
+HTTP-коды и latency:
+
+![Grafana HTTP Performance](assets/grafana-http-performance.png)
+
 ## Структура Ansible
 
 Все Ansible-файлы находятся в директории `ansible/`:
 
 - `ansible/playbook.yml` — подготовка целевого сервера;
 - `ansible/deploy.yml` — деплой приложения, Nginx и HTTPS;
-- `ansible/prometheus.yml` — подготовка ВМ наблюдаемости и деплой Prometheus;
+- `ansible/prometheus.yml` — подготовка ВМ наблюдаемости и деплой Prometheus
+  с Grafana;
 - `ansible/prometheus-check.yml` — проверка конфигурации и scrape targets;
+- `ansible/grafana-check.yml` — проверка Grafana, datasource'ов и дашбордов;
 - `ansible/roles/deploy/` — роль приложения и миграций;
 - `ansible/roles/node_exporter/` — установка и настройка Node Exporter;
 - `ansible/roles/prometheus/` — конфигурация, правила и контейнер Prometheus;
+- `ansible/roles/monitoring/` — контейнер Grafana, datasource'ы и дашборды;
 - `ansible/group_vars/all/` — общие настройки и зашифрованный пароль метрик;
 - `ansible/group_vars/app/vars.yml` — открытые параметры окружения;
 - `ansible/group_vars/monitoring/vars.yml` — параметры и scrape targets;
+- `ansible/group_vars/monitoring/vault.yml` — зашифрованный пароль Grafana;
 - `ansible/group_vars/app/vault.yml` — зашифрованные секреты;
 - `ansible/requirements.yml` — зафиксированные роли и коллекции;
 - `ansible/templates/` — Jinja2-шаблон Nginx.
 
 Все playbook идемпотентны: повторный запуск применяет только отсутствующие
-изменения. Контейнеры приложения и Prometheus настроены с политикой
+изменения. Контейнеры приложения, Prometheus и Grafana настроены с политикой
 перезапуска `unless-stopped`.
 
 ## Ссылки

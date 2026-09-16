@@ -63,7 +63,7 @@
       changed_when: false
       no_log: true
 
-- name: Deploy Prometheus monitoring server
+- name: Deploy Prometheus and Grafana monitoring server
   hosts: monitoring
   become: true
 
@@ -97,3 +97,4 @@
 
   roles:
     - role: prometheus
+    - role: monitoring

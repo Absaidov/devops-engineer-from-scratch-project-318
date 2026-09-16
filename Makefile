@@ -7,6 +7,7 @@ PREPARE_PLAYBOOK ?= $(ANSIBLE_DIR)/playbook.yml
 DEPLOY_PLAYBOOK ?= $(ANSIBLE_DIR)/deploy.yml
 PROMETHEUS_PLAYBOOK ?= $(ANSIBLE_DIR)/prometheus.yml
 PROMETHEUS_CHECK_PLAYBOOK ?= $(ANSIBLE_DIR)/prometheus-check.yml
+GRAFANA_CHECK_PLAYBOOK ?= $(ANSIBLE_DIR)/grafana-check.yml
 REQUIREMENTS_FILE ?= $(ANSIBLE_DIR)/requirements.yml
 APP_GROUP ?= app
 MONITORING_GROUP ?= monitoring
@@ -15,11 +16,13 @@ MANAGEMENT_BACKEND_PORT ?= 19090
 NODE_EXPORTER_PORT ?= 9100
 CONTAINER_NAME ?= project-devops-deploy
 PROMETHEUS_CONTAINER_NAME ?= prometheus
+GRAFANA_CONTAINER_NAME ?= grafana
 IMAGE_TAG ?=
 
 .PHONY: install syntax prepare deploy rollback check health metrics \
 	node-metrics logs monitoring-deploy prometheus-check \
-	prometheus-config-check prometheus-logs
+	prometheus-config-check prometheus-logs grafana-update grafana-check \
+	grafana-logs
 
 install:
 	$(ANSIBLE_GALAXY) install -r $(REQUIREMENTS_FILE)
@@ -29,6 +32,7 @@ syntax:
 	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(DEPLOY_PLAYBOOK) --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(PROMETHEUS_PLAYBOOK) --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(PROMETHEUS_CHECK_PLAYBOOK) --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(GRAFANA_CHECK_PLAYBOOK) --syntax-check
 
 prepare:
 	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(PREPARE_PLAYBOOK)
@@ -68,3 +72,11 @@ prometheus-config-check:
 
 prometheus-logs:
 	$(ANSIBLE) -i $(INVENTORY) $(MONITORING_GROUP) --become -m ansible.builtin.command -a "docker logs --tail 100 $(PROMETHEUS_CONTAINER_NAME)"
+
+grafana-update: monitoring-deploy
+
+grafana-check:
+	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(GRAFANA_CHECK_PLAYBOOK) --ask-vault-pass
+
+grafana-logs:
+	$(ANSIBLE) -i $(INVENTORY) $(MONITORING_GROUP) --become -m ansible.builtin.command -a "docker logs --tail 100 $(GRAFANA_CONTAINER_NAME)"

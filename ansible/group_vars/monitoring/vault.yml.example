@@ -1,0 +1,3 @@
+---
+# Encrypt the real value with ansible-vault before adding it to vault.yml.
+vault_grafana_admin_password: replace-with-grafana-admin-password
