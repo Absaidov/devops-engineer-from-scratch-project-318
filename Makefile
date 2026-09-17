@@ -22,7 +22,8 @@ IMAGE_TAG ?=
 .PHONY: install syntax prepare deploy rollback check health metrics \
 	node-metrics logs monitoring-deploy prometheus-check \
 	prometheus-config-check prometheus-logs grafana-update grafana-check \
-	grafana-logs
+	grafana-logs grafana-alerting-check grafana-alert-test \
+	grafana-alert-test-reset
 
 install:
 	$(ANSIBLE_GALAXY) install -r $(REQUIREMENTS_FILE)
@@ -77,6 +78,16 @@ grafana-update: monitoring-deploy
 
 grafana-check:
 	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(GRAFANA_CHECK_PLAYBOOK) --ask-vault-pass
+
+grafana-alerting-check: grafana-check
+
+grafana-alert-test:
+	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(PROMETHEUS_PLAYBOOK) --ask-vault-pass --extra-vars "grafana_test_alert_enabled=true"
+	@echo "Test alert enabled. Wait up to 90 seconds, confirm the email, then run: make grafana-alert-test-reset"
+
+grafana-alert-test-reset:
+	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(PROMETHEUS_PLAYBOOK) --ask-vault-pass --extra-vars "grafana_test_alert_enabled=false"
+	@echo "Test alert returned to the normal state."
 
 grafana-logs:
 	$(ANSIBLE) -i $(INVENTORY) $(MONITORING_GROUP) --become -m ansible.builtin.command -a "docker logs --tail 100 $(GRAFANA_CONTAINER_NAME)"

@@ -456,6 +456,88 @@ HTTP-коды и latency:
 
 ![Grafana HTTP Performance](assets/grafana-http-performance.png)
 
+## Алертинг в Grafana
+
+Grafana-managed alert rules, email contact point и notification policy
+создаются автоматически из файлов в
+`ansible/roles/monitoring/templates`. Они синхронизируются вместе с
+дашбордами командой:
+
+```bash
+make grafana-update
+```
+
+Правила оцениваются раз в минуту. Для кратковременных всплесков используется
+состояние `Pending` (`for`), а каждое правило содержит labels `service` и
+`severity`.
+
+| Правило | Условие | `for` | Labels | Связанная панель |
+|---|---|---:|---|---|
+| `application_down` | target приложения недоступен | 2 минуты | `application`, `critical` | Application Overview |
+| `application_http_5xx_high` | доля HTTP 5xx выше 5% | 5 минут | `application`, `critical` | HTTP Performance |
+| `application_latency_high` | HTTP p95 выше 1 секунды | 5 минут | `application`, `warning` | HTTP Performance |
+| `node_cpu_high` | CPU выше 85% | 10 минут | `application-host`, `warning` | System Overview |
+| `node_memory_high` | RAM выше 90% | 10 минут | `application-host`, `warning` | System Overview |
+| `node_root_disk_high` | корневая файловая система заполнена более чем на 85% | 10 минут | `application-host`, `warning` | System Overview |
+| `application_metrics_missing` | нет `process_uptime_seconds` более 5 минут | 1 минута после окна | `application-metrics`, `critical` | Status Page |
+
+HTTP 5xx вычисляются только по метрике приложения
+`http_server_requests_seconds_count{status=~"5.."}`. На дашборде
+`Observability / Status Page` собраны доступность приложения, 5xx, latency,
+CPU, RAM, диск, наличие метрик и текущие состояния алертов.
+
+### Почтовые уведомления
+
+Contact point `operations-email` использует Яндекс Почту через
+`smtp.yandex.ru:465`. Обычный пароль от почты использовать нельзя: в
+Яндекс ID необходимо создать отдельный пароль приложения для почтового
+клиента.
+
+В `ansible/group_vars/monitoring/vault.yml` должны находиться только
+зашифрованные значения:
+
+- `vault_grafana_smtp_user` — полный адрес Яндекс Почты; он же получатель;
+- `vault_grafana_smtp_password` — пароль приложения Яндекс Почты.
+
+На ВМ они записываются в защищённые файлы и передаются контейнеру через
+`GF_SMTP_USER__FILE` и `GF_SMTP_PASSWORD__FILE`. Пароль не попадает в
+репозиторий, provisioning YAML или вывод Ansible.
+
+После добавления секретов разверните конфигурацию и проверьте все
+provisioned-ресурсы:
+
+```bash
+make grafana-update
+make grafana-alerting-check
+```
+
+Правила находятся в Grafana в разделе
+`Alerts & IRM → Alerting → Alert rules`, а contact point — в
+`Alerts & IRM → Alerting → Notification configuration → Contact points`.
+На странице `operations-email` кнопка `Test` отправляет тестовое письмо и
+проверяет SMTP.
+
+Для воспроизводимой end-to-end проверки правила и маршрутизации предусмотрен
+синтетический алерт, который в обычном деплое находится в состоянии `Normal`:
+
+```bash
+make grafana-alert-test
+```
+
+Подождите до 90 секунд, убедитесь, что `Manual notification test` перешёл в
+`Firing` и письмо пришло. Затем обязательно верните правило в нормальное
+состояние:
+
+```bash
+make grafana-alert-test-reset
+```
+
+Проверка выполнена: правило перешло в состояние `Firing`, почтовое уведомление
+было доставлено, а после `make grafana-alert-test-reset` правило вернулось в
+состояние `Normal`.
+
+![Срабатывание тестового алерта в Grafana](assets/grafana-alert-firing.png)
+
 ## Структура Ansible
 
 Все Ansible-файлы находятся в директории `ansible/`:
@@ -465,15 +547,18 @@ HTTP-коды и latency:
 - `ansible/prometheus.yml` — подготовка ВМ наблюдаемости и деплой Prometheus
   с Grafana;
 - `ansible/prometheus-check.yml` — проверка конфигурации и scrape targets;
-- `ansible/grafana-check.yml` — проверка Grafana, datasource'ов и дашбордов;
+- `ansible/grafana-check.yml` — проверка Grafana, datasource'ов, дашбордов и
+  alerting-ресурсов;
 - `ansible/roles/deploy/` — роль приложения и миграций;
 - `ansible/roles/node_exporter/` — установка и настройка Node Exporter;
 - `ansible/roles/prometheus/` — конфигурация, правила и контейнер Prometheus;
-- `ansible/roles/monitoring/` — контейнер Grafana, datasource'ы и дашборды;
+- `ansible/roles/monitoring/` — контейнер Grafana, datasource'ы, дашборды,
+  alert rules, contact point и notification policy;
 - `ansible/group_vars/all/` — общие настройки и зашифрованный пароль метрик;
 - `ansible/group_vars/app/vars.yml` — открытые параметры окружения;
 - `ansible/group_vars/monitoring/vars.yml` — параметры и scrape targets;
-- `ansible/group_vars/monitoring/vault.yml` — зашифрованный пароль Grafana;
+- `ansible/group_vars/monitoring/vault.yml` — зашифрованные пароли Grafana и
+  SMTP;
 - `ansible/group_vars/app/vault.yml` — зашифрованные секреты;
 - `ansible/requirements.yml` — зафиксированные роли и коллекции;
 - `ansible/templates/` — Jinja2-шаблон Nginx.
