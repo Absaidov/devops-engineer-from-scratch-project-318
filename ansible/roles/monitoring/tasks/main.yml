@@ -389,3 +389,25 @@
   delay: "{{ grafana_readiness_delay }}"
   changed_when: false
   no_log: true
+
+- name: Verify that Grafana can query Loki
+  ansible.builtin.uri:
+    url: >-
+      http://127.0.0.1:{{ grafana_port }}/api/datasources/uid/{{
+        grafana_loki_datasource_uid
+      }}/health
+    method: GET
+    url_username: "{{ grafana_admin_user }}"
+    url_password: "{{ vault_grafana_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+    return_content: true
+    timeout: 5
+  register: grafana_loki_health_check
+  until:
+    - (grafana_loki_health_check.status | default(0)) == 200
+    - (grafana_loki_health_check.json.status | default('')) == 'OK'
+  retries: "{{ grafana_readiness_retries }}"
+  delay: "{{ grafana_readiness_delay }}"
+  changed_when: false
+  no_log: true

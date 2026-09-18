@@ -161,6 +161,10 @@
       ansible.builtin.include_role:
         name: nginx_exporter
 
+    - name: Install and configure Promtail
+      ansible.builtin.include_role:
+        name: promtail
+
     - name: Verify the HTTP to HTTPS redirect
       ansible.builtin.uri:
         url: "http://{{ deploy_bind_address }}:{{ nginx_http_port }}/"

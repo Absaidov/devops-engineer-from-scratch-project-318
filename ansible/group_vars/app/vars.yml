@@ -28,6 +28,27 @@ nginx_stub_status_path: /nginx_status
 nginx_exporter_image: nginx/nginx-prometheus-exporter:1.5.1
 nginx_exporter_listen_address: 0.0.0.0
 
+# Promtail tails only the current application container JSON log and the
+# structured Nginx log files. Loki is reached over the private VPC address.
+promtail_image: grafana/promtail:3.6.11
+promtail_container_name: promtail
+promtail_config_dir: /etc/promtail
+promtail_config_filename: promtail.yml
+promtail_config_path: "{{ promtail_config_dir }}/{{ promtail_config_filename }}"
+promtail_positions_dir: /var/lib/promtail
+promtail_positions_file: "{{ promtail_positions_dir }}/positions.yml"
+promtail_container_port: 9080
+promtail_bind_address: 127.0.0.1
+promtail_port: 9080
+promtail_environment: "{{ deploy_spring_profile }}"
+promtail_host_label: "{{ inventory_hostname }}"
+promtail_loki_push_url: >-
+  http://{{ hostvars[groups['monitoring'][0]].private_ip }}:{{
+    hostvars[groups['monitoring'][0]].loki_port | default(3100)
+  }}/loki/api/v1/push
+promtail_readiness_retries: 30
+promtail_readiness_delay: 2
+
 node_exporter_listen_address: 0.0.0.0
 node_exporter_enabled_collectors:
   - systemd
@@ -37,6 +58,7 @@ node_exporter_extra_arguments:
 
 deploy_registry_url: cr.yandex
 deploy_registry_username: json_key
+deploy_container_name: project-devops-deploy
 deploy_image_repository: cr.yandex/crphrkv4imihhuukiv7q/project-devops-deploy
 deploy_image_tag: a100ed36995989034cee26c2cfd9e1558201bdaa
 deploy_image: "{{ deploy_image_repository }}:{{ deploy_image_tag }}"
@@ -62,7 +84,7 @@ nginx_json_access_log_path: /var/log/nginx/access-json.log
 nginx_management_access_log_path: /var/log/nginx/management-access-json.log
 nginx_json_error_log_path: /var/log/nginx/error-json.ndjson
 nginx_access_log: >-
-  {{ nginx_json_access_log_path }} main buffer=16k flush=2m
+  {{ nginx_json_access_log_path }} main buffer=16k flush=1s
 nginx_error_log: >-
   syslog:server=unix:/dev/log,facility=local7,tag=nginx_error warn
 nginx_log_format: |-

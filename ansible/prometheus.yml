@@ -97,4 +97,5 @@
 
   roles:
     - role: prometheus
+    - role: loki
     - role: monitoring

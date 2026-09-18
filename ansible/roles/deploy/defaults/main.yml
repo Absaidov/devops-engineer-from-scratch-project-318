@@ -1,5 +1,4 @@
 ---
-deploy_container_name: project-devops-deploy
 deploy_container_environment: {}
 deploy_container_published_ports:
   - >-

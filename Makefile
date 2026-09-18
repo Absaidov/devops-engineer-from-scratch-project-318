@@ -7,6 +7,7 @@ PREPARE_PLAYBOOK ?= $(ANSIBLE_DIR)/playbook.yml
 DEPLOY_PLAYBOOK ?= $(ANSIBLE_DIR)/deploy.yml
 PROMETHEUS_PLAYBOOK ?= $(ANSIBLE_DIR)/prometheus.yml
 PROMETHEUS_CHECK_PLAYBOOK ?= $(ANSIBLE_DIR)/prometheus-check.yml
+LOKI_CHECK_PLAYBOOK ?= $(ANSIBLE_DIR)/loki-check.yml
 GRAFANA_CHECK_PLAYBOOK ?= $(ANSIBLE_DIR)/grafana-check.yml
 REQUIREMENTS_FILE ?= $(ANSIBLE_DIR)/requirements.yml
 APP_GROUP ?= app
@@ -19,13 +20,16 @@ NGINX_EXPORTER_PORT ?= 9113
 CONTAINER_NAME ?= project-devops-deploy
 NGINX_EXPORTER_CONTAINER_NAME ?= nginx-prometheus-exporter
 PROMETHEUS_CONTAINER_NAME ?= prometheus
+LOKI_CONTAINER_NAME ?= loki
+PROMTAIL_CONTAINER_NAME ?= promtail
 GRAFANA_CONTAINER_NAME ?= grafana
 IMAGE_TAG ?=
 
 .PHONY: install syntax prepare deploy rollback check health metrics \
 	node-metrics nginx-status nginx-metrics nginx-exporter-logs logs \
-	monitoring-deploy prometheus-check \
-	prometheus-config-check prometheus-logs grafana-update grafana-check \
+	monitoring-deploy prometheus-check loki-check \
+	prometheus-config-check prometheus-logs loki-logs promtail-logs \
+	grafana-update grafana-check \
 	grafana-logs grafana-alerting-check grafana-alert-test \
 	grafana-alert-test-reset
 
@@ -37,6 +41,7 @@ syntax:
 	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(DEPLOY_PLAYBOOK) --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(PROMETHEUS_PLAYBOOK) --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(PROMETHEUS_CHECK_PLAYBOOK) --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(LOKI_CHECK_PLAYBOOK) --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(GRAFANA_CHECK_PLAYBOOK) --syntax-check
 
 prepare:
@@ -84,8 +89,17 @@ prometheus-check:
 prometheus-config-check:
 	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(PROMETHEUS_CHECK_PLAYBOOK) --tags config
 
+loki-check:
+	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(LOKI_CHECK_PLAYBOOK)
+
 prometheus-logs:
 	$(ANSIBLE) -i $(INVENTORY) $(MONITORING_GROUP) --become -m ansible.builtin.command -a "docker logs --tail 100 $(PROMETHEUS_CONTAINER_NAME)"
+
+loki-logs:
+	$(ANSIBLE) -i $(INVENTORY) $(MONITORING_GROUP) --become -m ansible.builtin.command -a "docker logs --tail 100 $(LOKI_CONTAINER_NAME)"
+
+promtail-logs:
+	$(ANSIBLE) -i $(INVENTORY) $(APP_GROUP) --become -m ansible.builtin.command -a "docker logs --tail 100 $(PROMTAIL_CONTAINER_NAME)"
 
 grafana-update: monitoring-deploy
 

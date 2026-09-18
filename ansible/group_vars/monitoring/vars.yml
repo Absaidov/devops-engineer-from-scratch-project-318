@@ -34,6 +34,28 @@ prometheus_retention_time: 15d
 prometheus_readiness_retries: 30
 prometheus_readiness_delay: 2
 
+# Loki runs as a single binary beside Prometheus and Grafana. Its HTTP port is
+# published only on the monitoring VM private address so Promtail can push logs
+# over the VPC, while Grafana reaches it by container name on the Docker network.
+loki_image: grafana/loki:3.7.8
+loki_container_name: loki
+loki_network_name: "{{ prometheus_network_name }}"
+loki_container_port: 3100
+loki_container_uid: "10001"
+loki_container_gid: "10001"
+loki_config_dir: /etc/loki
+loki_config_filename: loki.yml
+loki_config_path: "{{ loki_config_dir }}/{{ loki_config_filename }}"
+loki_data_dir: /var/lib/loki
+loki_bind_address: "{{ private_ip }}"
+loki_port: 3100
+loki_allowed_cidrs:
+  - "{{ hostvars[groups['app'][0]].private_ip }}/32"
+loki_retention_period: 168h
+loki_schema_from: "2024-01-01"
+loki_readiness_retries: 30
+loki_readiness_delay: 2
+
 # All scrape targets are generated from inventory and shared group variables.
 # Add future exporters to this list instead of editing prometheus.yml.j2.
 prometheus_scrape_jobs:
@@ -264,3 +286,5 @@ grafana_dashboards:
     uid: status-page
   - filename: nginx-overview.json
     uid: nginx-overview
+  - filename: logs-overview.json
+    uid: logs-overview

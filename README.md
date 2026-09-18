@@ -67,11 +67,14 @@ PostgreSQL доступен только с внутреннего IP серве
 - открытые входящие TCP-порты `22`, `80` и `443`;
 - TCP-порты `9090`, `9100` и `9113`, разрешённые только с внутреннего адреса
   сервера мониторинга;
+- исходящий доступ к приватному адресу сервера наблюдаемости на TCP-порт
+  `3100` для отправки логов Promtail;
 - доступ к Managed PostgreSQL внутри облачной сети.
 
 Docker, Docker Compose, Git, cURL, UFW, Node Exporter, rsyslog и необходимые
 Python-библиотеки устанавливаются подготовительным playbook. Nginx, Certbot
-и Nginx Prometheus Exporter устанавливаются во время деплоя.
+и контейнеры Nginx Prometheus Exporter и Promtail настраиваются во время
+деплоя.
 
 ### Сервер наблюдаемости
 
@@ -80,11 +83,12 @@ Python-библиотеки устанавливаются подготовит�
 - Python 3, `apt`, SSH и пользователь с правами `sudo`;
 - входящий TCP-порт `22` для управления, `9090` для интерфейса Prometheus и
   `3000` для интерфейса Grafana;
+- входящий TCP-порт `3100` только с приватного адреса сервера приложения;
 - исходящий доступ к Docker Hub и к приватному IP приложения на TCP-портах
   `9090`, `9100` и `9113`.
 
-Docker, UFW, конфигурация и контейнеры Prometheus и Grafana устанавливаются
-командой `make monitoring-deploy`.
+Docker, UFW, конфигурация и контейнеры Prometheus, Loki и Grafana
+устанавливаются командой `make monitoring-deploy`.
 
 ## Подготовка к запуску
 
@@ -171,19 +175,20 @@ make prepare
 make deploy
 ```
 
-Подготовить ВМ наблюдаемости и развернуть Prometheus с Grafana одной командой:
+Подготовить ВМ наблюдаемости и развернуть Prometheus, Loki и Grafana одной
+командой:
 
 ```bash
 make monitoring-deploy
 ```
 
 Команда устанавливает Docker и UFW, проверяет конфигурацию и alert rules через
-`promtool`, создаёт сеть `monitoring`, запускает контейнеры и ожидает
-`up == 1` для всех настроенных таргетов. Она также применяет provisioning
-datasource'ов и дашбордов Grafana, поэтому этой же командой обновляются
-дашборды после изменения их JSON-файлов. Перед запуском Prometheus playbook
-обновляет UFW и management-конфигурацию Nginx на сервере приложения, используя
-приватный адрес группы `monitoring`. Повторный запуск идемпотентен.
+`promtool`, создаёт сеть `monitoring`, запускает контейнеры и ожидает готовности
+Prometheus и Loki. Она также применяет provisioning datasource'ов и дашбордов
+Grafana, поэтому этой же командой обновляются дашборды после изменения их
+JSON-файлов. Перед запуском Prometheus playbook обновляет UFW и
+management-конфигурацию Nginx на сервере приложения, используя приватный адрес
+группы `monitoring`. Повторный запуск идемпотентен.
 
 Развернуть новый образ по полному SHA коммита:
 
@@ -371,6 +376,7 @@ Alert rule `TargetDown` срабатывает, если любой scrape targe
 - TCP `22` с доверенного публичного IP для SSH;
 - TCP `9090` с адресов, которым нужен интерфейс Prometheus;
 - TCP `3000` с адресов, которым нужен интерфейс Grafana;
+- TCP `3100` только с приватного адреса сервера приложения `192.168.1.25/32`;
 - исходящий трафик для загрузки пакетов и сбора метрик.
 
 Чтобы проверяющий мог открыть `/graph`, можно разрешить входящий TCP `9090` из
@@ -400,10 +406,9 @@ Datasource'ы создаются автоматически с помощью pr
 
 - `Prometheus` обращается к `http://prometheus:9090` внутри Docker-сети и
   используется по умолчанию;
-- `Loki` заранее настроен на `http://loki:3100`. До развёртывания Loki этот
-  datasource может отображаться как недоступный — это ожидаемое состояние.
+- `Loki` обращается к `http://loki:3100` внутри той же закрытой Docker-сети.
 
-Provisioning создаёт пять дашбордов:
+Provisioning создаёт шесть дашбордов:
 
 | UID | Назначение |
 |---|---|
@@ -412,11 +417,12 @@ Provisioning создаёт пять дашбордов:
 | `http-performance` | частота HTTP-ответов по label `status` и перцентили p50, p95, p99 |
 | `status-page` | сводное состояние сервисов и текущие alert rules |
 | `nginx-overview` | доступность Nginx, RPS и состояния соединений |
+| `logs-overview` | HTTP 5xx и latency из Nginx JSON-логов, логи приложения и поиск по пользователю |
 
-Дашборды используют переменные `$job` и `$instance`. Панель кодов ответа
-строится на `http_server_requests_seconds_count` с группировкой по `status`, а
-latency — через `histogram_quantile()` по
-`http_server_requests_seconds_bucket`.
+Дашборды метрик используют переменные `$job` и `$instance`, а dashboard логов
+— `$env`, `$host` и `$user`. Панель кодов ответа строится на
+`http_server_requests_seconds_count` с группировкой по `status`, а latency —
+через `histogram_quantile()` по `http_server_requests_seconds_bucket`.
 
 Развернуть или обновить Grafana и provisioned dashboards:
 
@@ -428,7 +434,8 @@ make grafana-update
 Prometheus остаётся работающим, а Grafana перезапускается только при реальном
 изменении конфигурации, пароля или JSON-файлов дашбордов.
 
-Проверить health API Grafana, datasource Prometheus и наличие всех дашбордов:
+Проверить health API Grafana, datasource'ы Prometheus и Loki и наличие всех
+дашбордов:
 
 ```bash
 make grafana-check
@@ -608,6 +615,98 @@ Open Source Nginx `stub_status` не содержит разбивки HTTP-от
 времени обработки запросов. Поэтому панели status codes и latency продолжают
 использовать метрики Spring Actuator на dashboard `HTTP Performance`.
 
+## Централизованные логи: Promtail и Loki
+
+Loki `3.7.8` работает на ВМ наблюдаемости в single-binary режиме и подключён
+к Docker-сети `monitoring`. Конфигурация создаётся из Jinja2-шаблона, данные
+хранятся в `/var/lib/loki` и переживают замену контейнера. Для учебного стенда
+используются TSDB schema `v13`, локальное filesystem-хранилище и срок хранения
+семь дней.
+
+Порт Loki `3100` привязан только к приватному адресу `192.168.1.15`. UFW
+разрешает подключение лишь с приватного адреса сервера приложения. В Security
+Group ВМ наблюдаемости необходимо создать такое же входящее правило:
+
+| Направление | Протокол | Порт | Источник |
+|---|---|---:|---|
+| входящий | TCP | `3100` | `192.168.1.25/32` |
+
+Порт `3100` нельзя открывать для `0.0.0.0/0`: у Loki нет встроенного слоя
+аутентификации. Чувствительных значений в конфигурации этой связки нет, поэтому
+для Loki и Promtail новые секреты Vault не требуются. Grafana обращается к
+Loki по адресу `http://loki:3100` внутри закрытой Docker-сети.
+
+На сервере приложения роль `ansible/roles/promtail` запускает закреплённый
+образ Promtail `3.6.11` с `restart_policy: unless-stopped`. Promtail читает
+только stdout текущего контейнера приложения и JSON-файлы Nginx:
+
+- `/var/log/nginx/access-json.log`;
+- `/var/log/nginx/management-access-json.log`;
+- `/var/log/nginx/error-json.ndjson`.
+
+Проверка живого сервера подтвердила, что stdout приложения содержит JSON
+Logback внутри Docker `json-file`, а перечисленные логи Nginx также являются
+JSON. Конвейеры Promtail разбирают внешний Docker envelope и внутренний JSON,
+не добавляя в индекс высококардинальные поля вроде URL, request ID или имени
+пользователя.
+
+Каждый поток получает обязательные labels `job`, `env`, `app` и `host`.
+Для приложения используется `job="application"`; для Nginx — `job="nginx"`
+и дополнительный label `log_type` со значениями `access`, `management` или
+`error`.
+
+Promtail объявлен Grafana устаревшим и с 2 марта 2026 года находится в статусе
+EOL. В проекте он используется, потому что прямо указан в учебном задании;
+образ закреплён на последней опубликованной версии, а для дальнейшего развития
+стека следует перейти на Grafana Alloy.
+
+### Развёртывание и проверка логов
+
+Сначала разверните Loki на ВМ наблюдаемости, затем Promtail на сервере
+приложения:
+
+```bash
+make monitoring-deploy
+make deploy
+```
+
+Проверить readiness Loki с сервера приложения можно по приватной сети:
+
+```bash
+ssh ubuntu@89.169.153.112 \
+  'curl --fail http://192.168.1.15:3100/ready'
+```
+
+Автоматическая end-to-end проверка создаёт маркированный HTTP-запрос через
+Nginx и JSON-маркер в stdout контейнера приложения, ждёт появления обеих
+записей в Loki и проверяет обязательные labels:
+
+```bash
+make loki-check
+```
+
+Логи самих агентов и хранилища доступны командами:
+
+```bash
+make promtail-logs
+make loki-logs
+```
+
+Provisioned dashboard доступен в Grafana:
+
+- [Logs Overview](http://111.88.251.148:3000/d/logs-overview/logs-overview)
+
+Он содержит сохранённые LogQL-запросы для всплесков HTTP 5xx, p95 latency,
+логов приложения, ошибок Nginx и текстового поиска по пользователю. Аналогичные
+запросы можно выполнить в `Explore`:
+
+```logql
+{job="application", env="prod"}
+{job="nginx", log_type="access"} | json | status >= 500 and status < 600
+quantile_over_time(0.95, {job="nginx", log_type="access"} | json | unwrap request_time | __error__="" [5m])
+{job=~"application|nginx"} |~ "(?i)<user>"
+```
+
 ## Структура Ansible
 
 Все Ansible-файлы находятся в директории `ansible/`:
@@ -619,11 +718,14 @@ Open Source Nginx `stub_status` не содержит разбивки HTTP-от
 - `ansible/prometheus-check.yml` — проверка конфигурации и scrape targets;
 - `ansible/grafana-check.yml` — проверка Grafana, datasource'ов, дашбордов и
   alerting-ресурсов;
+- `ansible/loki-check.yml` — сквозная проверка доставки JSON-логов в Loki;
 - `ansible/roles/deploy/` — роль приложения и миграций;
 - `ansible/roles/node_exporter/` — установка и настройка Node Exporter;
 - `ansible/roles/nginx_exporter/` — контейнер Nginx Prometheus Exporter и
   проверка метрик Nginx;
+- `ansible/roles/promtail/` — сбор stdout приложения и JSON-логов Nginx;
 - `ansible/roles/prometheus/` — конфигурация, правила и контейнер Prometheus;
+- `ansible/roles/loki/` — single-binary Loki и постоянное хранилище логов;
 - `ansible/roles/monitoring/` — контейнер Grafana, datasource'ы, дашборды,
   alert rules, contact point и notification policy;
 - `ansible/group_vars/all/` — общие настройки и зашифрованный пароль метрик;
@@ -636,8 +738,8 @@ Open Source Nginx `stub_status` не содержит разбивки HTTP-от
 - `ansible/templates/` — Jinja2-шаблон Nginx.
 
 Все playbook идемпотентны: повторный запуск применяет только отсутствующие
-изменения. Контейнеры приложения, Nginx Exporter, Prometheus и Grafana
-настроены с политикой перезапуска `unless-stopped`.
+изменения. Контейнеры приложения, Nginx Exporter, Promtail, Prometheus, Loki и
+Grafana настроены с политикой перезапуска `unless-stopped`.
 
 ## Ссылки
 
