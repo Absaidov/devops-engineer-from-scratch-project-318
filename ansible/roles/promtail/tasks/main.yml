@@ -17,17 +17,14 @@
       - >-
         promtail_loki_push_url
         == 'http://' ~ hostvars[groups['monitoring'][0]].private_ip ~ ':'
-        ~ (
-          hostvars[groups['monitoring'][0]].loki_port
-          | default(3100)
-          | string
-        ) ~ '/loki/api/v1/push'
+        ~ (hostvars[groups['monitoring'][0]].loki_port | string)
+        ~ '/loki/api/v1/push'
       - promtail_environment | trim | length > 0
       - promtail_host_label | trim | length > 0
     fail_msg: >-
       Give the monitoring host a private_ip, use a pinned Promtail image, keep
       its local status endpoint on loopback, and send logs to private Loki
-      port 3100.
+      on the configured port.
 
 - name: Inspect the application container for Promtail
   community.docker.docker_container_info:

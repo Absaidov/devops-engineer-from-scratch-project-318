@@ -44,7 +44,7 @@ promtail_environment: "{{ deploy_spring_profile }}"
 promtail_host_label: "{{ inventory_hostname }}"
 promtail_loki_push_url: >-
   http://{{ hostvars[groups['monitoring'][0]].private_ip }}:{{
-    hostvars[groups['monitoring'][0]].loki_port | default(3100)
+    hostvars[groups['monitoring'][0]].loki_port
   }}/loki/api/v1/push
 promtail_readiness_retries: 30
 promtail_readiness_delay: 2

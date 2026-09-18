@@ -5,6 +5,8 @@
 ansible/inventory.ini
 *.retry
 .env
+.venv/
+.ansible/
 
 # Vault passwords and service-account keys must never be committed.
 .vault_pass

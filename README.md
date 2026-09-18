@@ -49,15 +49,39 @@ make docker-build
 PostgreSQL доступен только с внутреннего IP сервера приложения. Бакет закрыт,
 а приложение обращается к нему от имени отдельного сервисного аккаунта.
 
+### Карта стенда, портов и доступов
+
+| Компонент | Узел / адрес | Порт и URL | Кто имеет доступ |
+|---|---|---|---|
+| Приложение | `89.169.153.112`, приватный `192.168.1.25` | [https://uit14.ru](https://uit14.ru), TCP `443`; TCP `80` только для редиректа | интернет |
+| SSH приложения | `89.169.153.112` | TCP `22` | доверенный публичный `/32` |
+| Actuator через Nginx | `192.168.1.25` | TCP `9090`, `/actuator/health/*`, `/actuator/prometheus` | только `192.168.1.15/32`, метрики защищены Basic Auth |
+| Node Exporter | `192.168.1.25` | TCP `9100`, `/metrics` | только `192.168.1.15/32` |
+| Nginx Exporter | `192.168.1.25` | TCP `9113`, `/metrics` | только `192.168.1.15/32` |
+| Prometheus | `111.88.251.148`, приватный `192.168.1.15` | [http://111.88.251.148:9090](http://111.88.251.148:9090), TCP `9090` | проверяющий и доверенные адреса |
+| Grafana | `111.88.251.148`, приватный `192.168.1.15` | [http://111.88.251.148:3000](http://111.88.251.148:3000), TCP `3000` | проверяющий и доверенные адреса |
+| Loki | `192.168.1.15` | TCP `3100` | только сервер приложения `192.168.1.25/32` |
+| Managed PostgreSQL | `rc1a-ths7ptdlvrtqlvfl.mdb.yandexcloud.net` | TCP `6432`, БД `bulletins` | только сервер приложения |
+| Object Storage | `storage.yandexcloud.net` | HTTPS `443`, бакет `uit14-bulletins-images` | сервисный аккаунт приложения |
+
+Канал оповещений — contact point Grafana `operations-email` через SMTP Яндекс
+Почты (`smtp.yandex.ru:465`). Адрес и пароль приложения хранятся только в
+Ansible Vault.
+
 ## Требования
 
 ### Управляющий компьютер
 
 - Linux, macOS или Windows с WSL;
-- Python 3, Ansible Core 2.18 или новее, Make, Git, cURL и SSH-клиент;
+- Python 3.12 или новее с модулем `venv`, Make, Git, cURL и SSH-клиент;
 - SSH-ключ для пользователя `ubuntu` на целевом сервере;
 - пароль от Ansible Vault;
-- доступ в интернет для установки ролей и коллекций Ansible.
+- доступ в интернет для установки Python-зависимостей, ролей и коллекций
+  Ansible.
+
+Команда `make install` создаёт локальное окружение `.venv` и устанавливает в
+него закреплённые версии Ansible Core и `ansible-lint`; глобальная установка
+Ansible не требуется.
 
 ### Сервер приложения
 
@@ -90,9 +114,29 @@ Python-библиотеки устанавливаются подготовит�
 Docker, UFW, конфигурация и контейнеры Prometheus, Loki и Grafana
 устанавливаются командой `make monitoring-deploy`.
 
-## Подготовка к запуску
+## Развёртывание с нуля
 
-После клонирования репозитория создайте локальный inventory:
+1. Сделайте fork репозитория приложения, убедитесь, что его CI публикует
+   Docker-образ в Container Registry, затем клонируйте этот инфраструктурный
+   репозиторий.
+2. Создайте в одной VPC две ВМ Ubuntu 24.04 LTS: `app-server` и
+   `monitoring-server`. Назначьте им статические публичные и приватные адреса.
+3. Создайте Managed PostgreSQL, закрытый бакет Object Storage, Container
+   Registry и отдельные сервисные аккаунты с минимальными правами. Сохраните
+   выданные ключи только до их помещения в Vault.
+4. Добавьте публичный SSH-ключ пользователю `ubuntu` обеих ВМ и проверьте вход
+   по ключу. В Security Groups разрешите порты строго по таблице выше.
+5. Создайте A-записи домена на публичный IP `app-server`; дождитесь, пока
+   `dig +short A <domain>` начнёт возвращать этот адрес.
+6. Создайте локальный inventory, выполните `make install`, затем заполните
+   открытые переменные и создайте Vault-файлы по примерам.
+7. Подготовьте сервер приложения, разверните приложение и после него стек
+   наблюдаемости.
+8. Запустите статические и сквозные проверки. Финальный `make smoke` должен
+   завершиться без `failed` и `unreachable`.
+
+Все команды ниже выполняются из корня репозитория. Сначала создайте локальный
+inventory:
 
 ```bash
 cp ansible/inventory.ini.example ansible/inventory.ini
@@ -111,6 +155,12 @@ monitoring-server ansible_host=<monitoring-public-ip> private_ip=<monitoring-pri
 `ansible_host` используется Ansible для SSH, а `private_ip` — для сбора метрик
 внутри облачной сети. Локальный `ansible/inventory.ini` игнорируется Git.
 
+Установите локальное Python-окружение, Ansible, линтер, роли и коллекции:
+
+```bash
+make install
+```
+
 Секреты приложения зашифрованы по отдельности в
 `ansible/group_vars/app/vault.yml`. Общий пароль, с которым Prometheus
 обращается к защищённому Actuator endpoint, находится в
@@ -121,11 +171,12 @@ monitoring-server ansible_host=<monitoring-public-ip> private_ip=<monitoring-pri
 Для Basic Auth management endpoint создайте отдельный пароль:
 
 ```bash
-ansible-vault encrypt_string --ask-vault-pass --name vault_monitoring_basic_auth_password
+make vault-encrypt
 ```
 
-Введите новый пароль для пользователя мониторинга, завершите ввод сочетанием
-`Ctrl+D` и добавьте полученный YAML-блок в
+В строке `Variable name` укажите
+`vault_monitoring_basic_auth_password`, затем введите новый пароль для
+пользователя мониторинга. Добавьте полученный YAML-блок в
 `ansible/group_vars/all/vault.yml`. Используйте тот же пароль Ansible Vault,
 которым уже зашифрованы остальные значения.
 
@@ -133,7 +184,7 @@ ansible-vault encrypt_string --ask-vault-pass --name vault_monitoring_basic_auth
 `ansible/group_vars/monitoring/vault.yml`. Создайте его командой:
 
 ```bash
-ansible-vault encrypt_string --ask-vault-pass --prompt
+make vault-encrypt
 ```
 
 В строке `Variable name` укажите `vault_grafana_admin_password`, затем
@@ -141,6 +192,31 @@ ansible-vault encrypt_string --ask-vault-pass --prompt
 тот же пароль Ansible Vault. Полученный YAML-блок добавьте в
 `ansible/group_vars/monitoring/vault.yml`. Открытое значение пароля и файл с
 паролем расшифровки добавлять в репозиторий нельзя.
+
+### Переменные окружения и Vault
+
+Открытые настройки хранятся только в `group_vars`, а роли получают их через
+переменные. Основные группы настроек:
+
+| Файл | Настройки |
+|---|---|
+| `ansible/group_vars/all/vars.yml` | общие порты и имя пользователя Basic Auth |
+| `ansible/group_vars/app/vars.yml` | домен, образ и тег приложения, PostgreSQL host/port/database/SSL, S3 endpoint/bucket/region, порты Nginx и экспортеров |
+| `ansible/group_vars/monitoring/vars.yml` | закреплённые образы Prometheus/Loki/Grafana, scrape targets, retention, UI-порты, SMTP host, дашборды и alert rules |
+
+Секретные переменные создаются по соседним `vault.yml.example` и сохраняются
+в соответствующих `vault.yml` только в зашифрованном виде:
+
+| Vault-файл | Обязательные переменные |
+|---|---|
+| `ansible/group_vars/all/vault.yml` | `vault_monitoring_basic_auth_password` |
+| `ansible/group_vars/app/vault.yml` | `vault_yc_registry_key`, `vault_db_username`, `vault_db_password`, `vault_s3_access_key`, `vault_s3_secret_key` |
+| `ansible/group_vars/monitoring/vault.yml` | `vault_grafana_admin_password`, `vault_grafana_smtp_user`, `vault_grafana_smtp_password` |
+
+Во время деплоя роль создаёт файлы окружения приложения и миграций из
+Jinja2-шаблонов `application.env.j2` и `migration.env.j2`. Локальные `.env`,
+пароль Vault и исходные JSON-ключи игнорируются Git и не должны попадать в
+коммиты или вывод CI.
 
 Список адресов, которым разрешено собирать метрики, формируется автоматически
 из приватных IP группы `monitoring` в inventory. В Security Group сервера
@@ -151,13 +227,26 @@ ansible-vault encrypt_string --ask-vault-pass --prompt
 
 Все команды запускаются из корня репозитория.
 
-Установить зафиксированные версии ролей и коллекций Ansible:
+Создать `.venv` и установить зафиксированные версии Ansible Core,
+`ansible-lint`, ролей и коллекций:
 
 ```bash
 make install
 ```
 
-Проверить синтаксис playbook:
+Запустить `ansible-lint` с базовым профилем:
+
+```bash
+make lint
+```
+
+Запустить линтер и проверку синтаксиса всех playbook:
+
+```bash
+make test
+```
+
+Отдельно проверить только синтаксис playbook:
 
 ```bash
 make syntax
@@ -204,9 +293,22 @@ make rollback IMAGE_TAG=<previous-full-commit-sha>
 
 Роль не принимает изменяемые теги наподобие `latest`.
 
+После полного развёртывания выполнить единую smoke-проверку:
+
+```bash
+make smoke
+```
+
+Она проверяет SSH/Ansible-доступ к обеим ВМ, HTTPS-страницу, статический
+`manifest.json`, REST API, readiness приложения, конфигурацию и targets
+Prometheus, datasource'ы/дашборды/алерты Grafana и доставку тестовых логов
+Nginx и приложения через Promtail в Loki. Во время проверки потребуется один
+раз ввести пароль Ansible Vault для Grafana API.
+
 ## Проверка приложения и логов
 
-Проверить главную страницу и API через публичный HTTPS-адрес:
+Проверить главную страницу, статический `manifest.json` и REST API через
+публичный HTTPS-адрес:
 
 ```bash
 make check
@@ -707,6 +809,27 @@ quantile_over_time(0.95, {job="nginx", log_type="access"} | json | unwrap reques
 {job=~"application|nginx"} |~ "(?i)<user>"
 ```
 
+## Финальная проверка
+
+Проверяющий может воспроизвести статические и живые проверки двумя командами:
+
+```bash
+make test
+make smoke
+```
+
+Ожидаемый результат: обе ВМ отвечают `pong`, публичная страница, статический
+файл и REST API возвращают успешный ответ, все Prometheus targets имеют
+`up == 1`, Grafana видит Prometheus и Loki, а тестовые записи приложения и
+Nginx находятся в Loki. После этого в Grafana следует открыть дашборды
+`System Overview`, `Application Overview`, `HTTP Performance`,
+`Nginx Overview` и `Logs Overview`.
+
+Почтовый канал проверяется отдельно командами `make grafana-alert-test` и
+`make grafana-alert-test-reset`: сначала дождитесь состояния `Firing` и письма,
+затем обязательно верните синтетический алерт в `Normal`. Подтверждающие
+скриншоты дашбордов и алерта находятся в каталоге `assets/`.
+
 ## Структура Ansible
 
 Все Ansible-файлы находятся в директории `ansible/`:
@@ -736,6 +859,9 @@ quantile_over_time(0.95, {job="nginx", log_type="access"} | json | unwrap reques
 - `ansible/group_vars/app/vault.yml` — зашифрованные секреты;
 - `ansible/requirements.yml` — зафиксированные роли и коллекции;
 - `ansible/templates/` — Jinja2-шаблон Nginx.
+
+Конфигурация `ansible-lint` находится в `.ansible-lint`, а закреплённые
+Python-зависимости для локального `.venv` — в `requirements-dev.txt`.
 
 Все playbook идемпотентны: повторный запуск применяет только отсутствующие
 изменения. Контейнеры приложения, Nginx Exporter, Promtail, Prometheus, Loki и

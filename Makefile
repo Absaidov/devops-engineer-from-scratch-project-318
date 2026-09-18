@@ -1,7 +1,11 @@
 ANSIBLE_DIR ?= ansible
-ANSIBLE ?= ansible
-ANSIBLE_PLAYBOOK ?= ansible-playbook
-ANSIBLE_GALAXY ?= ansible-galaxy
+PYTHON ?= python3
+VENV_DIR ?= .venv
+VENV_BIN ?= $(VENV_DIR)/bin
+ANSIBLE ?= $(VENV_BIN)/ansible
+ANSIBLE_PLAYBOOK ?= $(VENV_BIN)/ansible-playbook
+ANSIBLE_GALAXY ?= $(VENV_BIN)/ansible-galaxy
+ANSIBLE_LINT ?= $(VENV_BIN)/ansible-lint
 INVENTORY ?= $(ANSIBLE_DIR)/inventory.ini
 PREPARE_PLAYBOOK ?= $(ANSIBLE_DIR)/playbook.yml
 DEPLOY_PLAYBOOK ?= $(ANSIBLE_DIR)/deploy.yml
@@ -10,6 +14,7 @@ PROMETHEUS_CHECK_PLAYBOOK ?= $(ANSIBLE_DIR)/prometheus-check.yml
 LOKI_CHECK_PLAYBOOK ?= $(ANSIBLE_DIR)/loki-check.yml
 GRAFANA_CHECK_PLAYBOOK ?= $(ANSIBLE_DIR)/grafana-check.yml
 REQUIREMENTS_FILE ?= $(ANSIBLE_DIR)/requirements.yml
+PYTHON_REQUIREMENTS_FILE ?= requirements-dev.txt
 APP_GROUP ?= app
 MONITORING_GROUP ?= monitoring
 APP_URL ?= https://uit14.ru
@@ -25,7 +30,7 @@ PROMTAIL_CONTAINER_NAME ?= promtail
 GRAFANA_CONTAINER_NAME ?= grafana
 IMAGE_TAG ?=
 
-.PHONY: install syntax prepare deploy rollback check health metrics \
+.PHONY: install vault-encrypt lint syntax test ping smoke prepare deploy rollback check health metrics \
 	node-metrics nginx-status nginx-metrics nginx-exporter-logs logs \
 	monitoring-deploy prometheus-check loki-check \
 	prometheus-config-check prometheus-logs loki-logs promtail-logs \
@@ -34,7 +39,15 @@ IMAGE_TAG ?=
 	grafana-alert-test-reset
 
 install:
-	$(ANSIBLE_GALAXY) install -r $(REQUIREMENTS_FILE)
+	$(PYTHON) -m venv $(VENV_DIR)
+	$(VENV_BIN)/python -m pip install --disable-pip-version-check --requirement $(PYTHON_REQUIREMENTS_FILE)
+	SSL_CERT_FILE="$$($(VENV_BIN)/python -m certifi)" $(ANSIBLE_GALAXY) install -r $(REQUIREMENTS_FILE)
+
+vault-encrypt:
+	$(VENV_BIN)/ansible-vault encrypt_string --ask-vault-pass --prompt
+
+lint:
+	$(ANSIBLE_LINT) --config-file .ansible-lint ansible/
 
 syntax:
 	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(PREPARE_PLAYBOOK) --syntax-check
@@ -43,6 +56,20 @@ syntax:
 	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(PROMETHEUS_CHECK_PLAYBOOK) --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(LOKI_CHECK_PLAYBOOK) --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(GRAFANA_CHECK_PLAYBOOK) --syntax-check
+
+test: lint syntax
+
+ping:
+	$(ANSIBLE) -i $(INVENTORY) all -m ansible.builtin.ping
+
+smoke:
+	$(MAKE) ping
+	$(MAKE) check
+	$(MAKE) health
+	$(MAKE) prometheus-config-check
+	$(MAKE) prometheus-check
+	$(MAKE) grafana-check
+	$(MAKE) loki-check
 
 prepare:
 	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(PREPARE_PLAYBOOK)
@@ -56,8 +83,9 @@ rollback:
 
 check:
 	curl --fail --silent --show-error --location --output /dev/null "$(APP_URL)/"
+	curl --fail --silent --show-error --location --output /dev/null "$(APP_URL)/manifest.json"
 	curl --fail --silent --show-error --location --output /dev/null "$(APP_URL)/api/bulletins"
-	@echo "Application endpoints are available at $(APP_URL)"
+	@echo "Application page, static manifest and REST endpoint are available at $(APP_URL)"
 
 health:
 	$(ANSIBLE) -i $(INVENTORY) $(APP_GROUP) --become -m ansible.builtin.uri -a "url=http://127.0.0.1:$(MANAGEMENT_BACKEND_PORT)/actuator/health/readiness method=GET status_code=200 timeout=5"

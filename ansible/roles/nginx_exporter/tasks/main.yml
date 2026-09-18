@@ -56,16 +56,16 @@
     status_code: 200
     return_content: true
     timeout: 5
-  register: nginx_stub_status
+  register: nginx_exporter_stub_status
   changed_when: false
 
 - name: Verify Nginx stub status counters
   ansible.builtin.assert:
     that:
-      - "'Active connections:' in nginx_stub_status.content"
-      - "'Reading:' in nginx_stub_status.content"
-      - "'Writing:' in nginx_stub_status.content"
-      - "'Waiting:' in nginx_stub_status.content"
+      - "'Active connections:' in nginx_exporter_stub_status.content"
+      - "'Reading:' in nginx_exporter_stub_status.content"
+      - "'Writing:' in nginx_exporter_stub_status.content"
+      - "'Waiting:' in nginx_exporter_stub_status.content"
     fail_msg: Nginx stub_status does not expose the expected counters.
 
 - name: Read Nginx Exporter metrics locally

@@ -1,0 +1,8 @@
+---
+profile: basic
+exclude_paths:
+  - .venv/
+  - ansible/inventory.ini
+  - ansible/group_vars/all/vault.yml
+  - ansible/group_vars/app/vault.yml
+  - ansible/group_vars/monitoring/vault.yml
