@@ -101,6 +101,17 @@ server {
 {{ management_location('/actuator/health/liveness') }}
 {{ management_location('/actuator/health/readiness') }}
 
+    location = {{ nginx_stub_status_path }} {
+        allow 127.0.0.1;
+{% for cidr in monitoring_allowed_cidrs %}
+        allow {{ cidr }};
+{% endfor %}
+        deny all;
+
+        access_log off;
+        stub_status;
+    }
+
     location / {
         return 404;
     }

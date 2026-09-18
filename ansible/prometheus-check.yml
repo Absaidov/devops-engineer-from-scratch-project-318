@@ -65,3 +65,25 @@
         label: "{{ item.job_name }}"
       tags:
         - targets
+
+    - name: Verify required Prometheus metrics
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ prometheus_port }}/api/v1/query?query={{
+            item.query | urlencode
+          }}
+        method: GET
+        status_code: 200
+        return_content: true
+        timeout: 5
+      register: prometheus_metric_check
+      failed_when: >-
+        (prometheus_metric_check.json.status | default('')) != 'success'
+        or
+        (prometheus_metric_check.json.data.result | default([]) | length) == 0
+      changed_when: false
+      loop: "{{ prometheus_metric_checks }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - targets

@@ -35,7 +35,7 @@ prometheus_readiness_retries: 30
 prometheus_readiness_delay: 2
 
 # All scrape targets are generated from inventory and shared group variables.
-# Add future Nginx exporter and Loki-related jobs to this list.
+# Add future exporters to this list instead of editing prometheus.yml.j2.
 prometheus_scrape_jobs:
   - job_name: prometheus
     metrics_path: /metrics
@@ -52,6 +52,21 @@ prometheus_scrape_jobs:
     targets:
       - >-
         {{ hostvars[groups['app'][0]].private_ip }}:{{ monitoring_proxy_port }}
+  - job_name: nginx
+    metrics_path: /metrics
+    targets:
+      - >-
+        {{ hostvars[groups['app'][0]].private_ip }}:{{ nginx_exporter_port }}
+
+# Besides checking target availability, verify that the exporter exposes the
+# metric families used by the provisioned Grafana dashboard.
+prometheus_metric_checks:
+  - name: Nginx exporter reports a healthy scrape
+    query: 'nginx_up{job="nginx"} == 1'
+  - name: Nginx active connections are available
+    query: 'nginx_connections_active{job="nginx"}'
+  - name: Nginx HTTP request counter is available
+    query: 'nginx_http_requests_total{job="nginx"}'
 
 # Grafana runs beside Prometheus in the same Docker network. The image version
 # is pinned so repeated deployments are predictable.
@@ -247,3 +262,5 @@ grafana_dashboards:
     uid: http-performance
   - filename: status-page.json
     uid: status-page
+  - filename: nginx-overview.json
+    uid: nginx-overview

@@ -14,6 +14,9 @@
       - prometheus_scrape_jobs is sequence
       - prometheus_scrape_jobs is not string
       - prometheus_scrape_jobs | length > 0
+      - prometheus_metric_checks is sequence
+      - prometheus_metric_checks is not string
+      - prometheus_metric_checks | length > 0
       - >-
         prometheus_scrape_jobs | map(attribute='job_name') | unique | list
         | length == prometheus_scrape_jobs | length
@@ -32,6 +35,16 @@
   loop: "{{ prometheus_scrape_jobs }}"
   loop_control:
     label: "{{ item.job_name | default('unnamed') }}"
+
+- name: Validate Prometheus metric checks
+  ansible.builtin.assert:
+    that:
+      - item.name | trim | length > 0
+      - item.query | trim | length > 0
+    fail_msg: Every Prometheus metric check must have a name and a query.
+  loop: "{{ prometheus_metric_checks }}"
+  loop_control:
+    label: "{{ item.name | default('unnamed') }}"
 
 - name: Install monitoring server packages
   ansible.builtin.apt:
@@ -281,3 +294,24 @@
   loop: "{{ prometheus_scrape_jobs }}"
   loop_control:
     label: "{{ item.job_name }}"
+
+- name: Check required Prometheus metrics
+  ansible.builtin.uri:
+    url: >-
+      http://127.0.0.1:{{ prometheus_port }}/api/v1/query?query={{
+        item.query | urlencode
+      }}
+    method: GET
+    status_code: 200
+    return_content: true
+    timeout: 5
+  register: prometheus_metric_check
+  until:
+    - (prometheus_metric_check.json.status | default('')) == 'success'
+    - prometheus_metric_check.json.data.result | default([]) | length > 0
+  retries: "{{ prometheus_readiness_retries }}"
+  delay: "{{ prometheus_readiness_delay }}"
+  changed_when: false
+  loop: "{{ prometheus_metric_checks }}"
+  loop_control:
+    label: "{{ item.name }}"

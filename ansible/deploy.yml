@@ -157,6 +157,10 @@
     - name: Apply pending Nginx configuration changes
       ansible.builtin.meta: flush_handlers
 
+    - name: Install and configure Nginx Prometheus Exporter
+      ansible.builtin.include_role:
+        name: nginx_exporter
+
     - name: Verify the HTTP to HTTPS redirect
       ansible.builtin.uri:
         url: "http://{{ deploy_bind_address }}:{{ nginx_http_port }}/"

@@ -3,3 +3,4 @@
 monitoring_proxy_port: 9090
 monitoring_basic_auth_username: prometheus
 node_exporter_port: 9100
+nginx_exporter_port: 9113

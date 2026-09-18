@@ -13,14 +13,18 @@ APP_GROUP ?= app
 MONITORING_GROUP ?= monitoring
 APP_URL ?= https://uit14.ru
 MANAGEMENT_BACKEND_PORT ?= 19090
+MONITORING_PROXY_PORT ?= 9090
 NODE_EXPORTER_PORT ?= 9100
+NGINX_EXPORTER_PORT ?= 9113
 CONTAINER_NAME ?= project-devops-deploy
+NGINX_EXPORTER_CONTAINER_NAME ?= nginx-prometheus-exporter
 PROMETHEUS_CONTAINER_NAME ?= prometheus
 GRAFANA_CONTAINER_NAME ?= grafana
 IMAGE_TAG ?=
 
 .PHONY: install syntax prepare deploy rollback check health metrics \
-	node-metrics logs monitoring-deploy prometheus-check \
+	node-metrics nginx-status nginx-metrics nginx-exporter-logs logs \
+	monitoring-deploy prometheus-check \
 	prometheus-config-check prometheus-logs grafana-update grafana-check \
 	grafana-logs grafana-alerting-check grafana-alert-test \
 	grafana-alert-test-reset
@@ -58,6 +62,15 @@ metrics:
 
 node-metrics:
 	$(ANSIBLE) -i $(INVENTORY) $(APP_GROUP) --become -m ansible.builtin.uri -a "url=http://127.0.0.1:$(NODE_EXPORTER_PORT)/metrics method=GET status_code=200 timeout=5"
+
+nginx-status:
+	$(ANSIBLE) -i $(INVENTORY) $(APP_GROUP) --become -m ansible.builtin.uri -a "url=http://127.0.0.1:$(MONITORING_PROXY_PORT)/nginx_status method=GET status_code=200 return_content=true timeout=5"
+
+nginx-metrics:
+	$(ANSIBLE) -i $(INVENTORY) $(APP_GROUP) --become -m ansible.builtin.uri -a "url=http://127.0.0.1:$(NGINX_EXPORTER_PORT)/metrics method=GET status_code=200 timeout=5"
+
+nginx-exporter-logs:
+	$(ANSIBLE) -i $(INVENTORY) $(APP_GROUP) --become -m ansible.builtin.command -a "docker logs --tail 100 $(NGINX_EXPORTER_CONTAINER_NAME)"
 
 logs:
 	$(ANSIBLE) -i $(INVENTORY) $(APP_GROUP) --become -m ansible.builtin.command -a "docker logs --tail 100 $(CONTAINER_NAME)"

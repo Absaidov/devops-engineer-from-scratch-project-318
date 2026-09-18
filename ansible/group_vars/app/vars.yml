@@ -24,6 +24,10 @@ monitoring_allowed_cidrs: >-
 monitoring_proxy_bind_address: 0.0.0.0
 monitoring_basic_auth_file: /etc/nginx/.htpasswd-monitoring
 
+nginx_stub_status_path: /nginx_status
+nginx_exporter_image: nginx/nginx-prometheus-exporter:1.5.1
+nginx_exporter_listen_address: 0.0.0.0
+
 node_exporter_listen_address: 0.0.0.0
 node_exporter_enabled_collectors:
   - systemd

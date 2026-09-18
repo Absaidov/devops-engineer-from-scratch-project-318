@@ -65,13 +65,13 @@ PostgreSQL доступен только с внутреннего IP серве
 - пользователь с правами `sudo` без запроса пароля;
 - исходящий доступ к Container Registry, PostgreSQL и Object Storage;
 - открытые входящие TCP-порты `22`, `80` и `443`;
-- TCP-порты `9090` и `9100`, разрешённые только с внутреннего адреса сервера
-  мониторинга;
+- TCP-порты `9090`, `9100` и `9113`, разрешённые только с внутреннего адреса
+  сервера мониторинга;
 - доступ к Managed PostgreSQL внутри облачной сети.
 
 Docker, Docker Compose, Git, cURL, UFW, Node Exporter, rsyslog и необходимые
-Python-библиотеки устанавливаются подготовительным playbook. Nginx и Certbot
-устанавливаются во время деплоя.
+Python-библиотеки устанавливаются подготовительным playbook. Nginx, Certbot
+и Nginx Prometheus Exporter устанавливаются во время деплоя.
 
 ### Сервер наблюдаемости
 
@@ -81,7 +81,7 @@ Python-библиотеки устанавливаются подготовит�
 - входящий TCP-порт `22` для управления, `9090` для интерфейса Prometheus и
   `3000` для интерфейса Grafana;
 - исходящий доступ к Docker Hub и к приватному IP приложения на TCP-портах
-  `9090` и `9100`.
+  `9090`, `9100` и `9113`.
 
 Docker, UFW, конфигурация и контейнеры Prometheus и Grafana устанавливаются
 командой `make monitoring-deploy`.
@@ -140,8 +140,8 @@ ansible-vault encrypt_string --ask-vault-pass --prompt
 
 Список адресов, которым разрешено собирать метрики, формируется автоматически
 из приватных IP группы `monitoring` в inventory. В Security Group сервера
-приложения разрешите TCP `9090` и `9100` только с приватного IP сервера
-наблюдаемости `/32`. Не открывайте эти два порта для `0.0.0.0/0`.
+приложения разрешите TCP `9090`, `9100` и `9113` только с приватного IP
+сервера наблюдаемости `/32`. Не открывайте эти порты для `0.0.0.0/0`.
 
 ## Команды
 
@@ -329,6 +329,7 @@ Prometheus разворачивается отдельной ролью
 | `prometheus` | сам контейнер | `/metrics` | нет |
 | `node_exporter` | приватный IP приложения, порт `9100` | `/metrics` | ограничение по IP |
 | `application` | приватный IP приложения, порт `9090` | `/actuator/prometheus` | Basic Auth, пароль из Vault |
+| `nginx` | приватный IP приложения, порт `9113` | `/metrics` | ограничение по IP |
 
 Интерфейс и список scrape targets доступны по адресам:
 
@@ -341,7 +342,8 @@ Prometheus разворачивается отдельной ролью
 up
 ```
 
-Для jobs `prometheus`, `node_exporter` и `application` ожидается значение `1`.
+Для jobs `prometheus`, `node_exporter`, `application` и `nginx` ожидается
+значение `1`.
 То же самое можно проверить с управляющего компьютера:
 
 ```bash
@@ -401,13 +403,15 @@ Datasource'ы создаются автоматически с помощью pr
 - `Loki` заранее настроен на `http://loki:3100`. До развёртывания Loki этот
   datasource может отображаться как недоступный — это ожидаемое состояние.
 
-Provisioning создаёт три дашборда:
+Provisioning создаёт пять дашбордов:
 
 | UID | Назначение |
 |---|---|
 | `system-overview` | CPU, load average, память, файловые системы и сеть сервера приложения |
 | `application-overview` | доступность приложения, uptime, CPU процесса и память JVM |
 | `http-performance` | частота HTTP-ответов по label `status` и перцентили p50, p95, p99 |
+| `status-page` | сводное состояние сервисов и текущие alert rules |
+| `nginx-overview` | доступность Nginx, RPS и состояния соединений |
 
 Дашборды используют переменные `$job` и `$instance`. Панель кодов ответа
 строится на `http_server_requests_seconds_count` с группировкой по `status`, а
@@ -424,7 +428,7 @@ make grafana-update
 Prometheus остаётся работающим, а Grafana перезапускается только при реальном
 изменении конфигурации, пароля или JSON-файлов дашбордов.
 
-Проверить health API Grafana, datasource Prometheus и наличие трёх дашбордов:
+Проверить health API Grafana, datasource Prometheus и наличие всех дашбордов:
 
 ```bash
 make grafana-check
@@ -538,6 +542,72 @@ make grafana-alert-test-reset
 
 ![Срабатывание тестового алерта в Grafana](assets/grafana-alert-firing.png)
 
+## Nginx Prometheus Exporter
+
+В конфигурации Nginx включён отдельный endpoint
+`http://192.168.1.25:9090/nginx_status`. Он отдаёт стандартную страницу
+`stub_status` и доступен только с localhost и приватных адресов группы
+`monitoring`. Дополнительно порт `9090` закрыт UFW и Security Group от всех
+остальных источников.
+
+Роль `ansible/roles/nginx_exporter` запускает официальный закреплённый образ
+`nginx/nginx-prometheus-exporter:1.5.1` в Docker с политикой перезапуска
+`unless-stopped`. Экспортер читает локальный `stub_status` и публикует
+Prometheus-метрики на порту `9113`. UFW разрешает этот порт только приватным
+адресам серверов мониторинга. В Security Group сервера приложения также
+должно быть входящее правило TCP `9113` с источником `192.168.1.15/32`.
+
+Сначала разверните изменения на сервере приложения, затем обновите стек
+наблюдаемости:
+
+```bash
+make deploy
+make monitoring-deploy
+```
+
+Проверить `stub_status` с ВМ наблюдаемости:
+
+```bash
+ssh ubuntu@111.88.251.148 \
+  'curl -fsS http://192.168.1.25:9090/nginx_status'
+```
+
+В ответе должны присутствовать `Active connections`, `Reading`, `Writing` и
+`Waiting`. Локальные проверки через Ansible и endpoint экспортера:
+
+```bash
+make nginx-status
+make nginx-metrics
+make nginx-exporter-logs
+```
+
+Проверить живую конфигурацию Prometheus через `promtool`, состояние всех
+targets и наличие обязательных метрик:
+
+```bash
+make prometheus-config-check
+make prometheus-check
+```
+
+В Prometheus ожидаются следующие запросы:
+
+```promql
+up{job="nginx"}
+nginx_up{job="nginx"}
+nginx_connections_active{job="nginx"}
+nginx_http_requests_total{job="nginx"}
+```
+
+Для них ожидаются непустые результаты, а для `up` и `nginx_up` — значение
+`1`. Метрики отображаются на provisioned dashboard
+[Nginx Overview](http://111.88.251.148:3000/d/nginx-overview/nginx-overview):
+RPS вычисляется как `rate(nginx_http_requests_total[1m])`, отдельно показаны
+активные, читающие, записывающие и ожидающие соединения.
+
+Open Source Nginx `stub_status` не содержит разбивки HTTP-ответов по кодам и
+времени обработки запросов. Поэтому панели status codes и latency продолжают
+использовать метрики Spring Actuator на dashboard `HTTP Performance`.
+
 ## Структура Ansible
 
 Все Ansible-файлы находятся в директории `ansible/`:
@@ -551,6 +621,8 @@ make grafana-alert-test-reset
   alerting-ресурсов;
 - `ansible/roles/deploy/` — роль приложения и миграций;
 - `ansible/roles/node_exporter/` — установка и настройка Node Exporter;
+- `ansible/roles/nginx_exporter/` — контейнер Nginx Prometheus Exporter и
+  проверка метрик Nginx;
 - `ansible/roles/prometheus/` — конфигурация, правила и контейнер Prometheus;
 - `ansible/roles/monitoring/` — контейнер Grafana, datasource'ы, дашборды,
   alert rules, contact point и notification policy;
@@ -564,8 +636,8 @@ make grafana-alert-test-reset
 - `ansible/templates/` — Jinja2-шаблон Nginx.
 
 Все playbook идемпотентны: повторный запуск применяет только отсутствующие
-изменения. Контейнеры приложения, Prometheus и Grafana настроены с политикой
-перезапуска `unless-stopped`.
+изменения. Контейнеры приложения, Nginx Exporter, Prometheus и Grafana
+настроены с политикой перезапуска `unless-stopped`.
 
 ## Ссылки
 
