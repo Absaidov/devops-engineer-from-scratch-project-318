@@ -2,7 +2,7 @@
 ._*
 
 # Local Ansible runtime files.
-ansible/inventory.ini
+ansible/inventories/local.ini
 *.retry
 .env
 .venv/

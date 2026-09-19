@@ -1,8 +1,10 @@
 ---
 profile: basic
+offline: true
 exclude_paths:
   - .venv/
-  - ansible/inventory.ini
+  - ansible/inventories/production.ini
+  - ansible/inventories/group_vars/
   - ansible/group_vars/all/vault.yml
   - ansible/group_vars/app/vault.yml
   - ansible/group_vars/monitoring/vault.yml

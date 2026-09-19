@@ -1,4 +1,7 @@
 ANSIBLE_DIR ?= ansible
+PLAYBOOK_DIR ?= $(ANSIBLE_DIR)/playbooks
+INVENTORY_DIR ?= $(ANSIBLE_DIR)/inventories
+ANSIBLE_CONFIG_FILE ?= $(ANSIBLE_DIR)/ansible.cfg
 PYTHON ?= python3
 VENV_DIR ?= .venv
 VENV_BIN ?= $(VENV_DIR)/bin
@@ -6,14 +9,14 @@ ANSIBLE ?= $(VENV_BIN)/ansible
 ANSIBLE_PLAYBOOK ?= $(VENV_BIN)/ansible-playbook
 ANSIBLE_GALAXY ?= $(VENV_BIN)/ansible-galaxy
 ANSIBLE_LINT ?= $(VENV_BIN)/ansible-lint
-INVENTORY ?= $(ANSIBLE_DIR)/inventory.ini
-PREPARE_PLAYBOOK ?= $(ANSIBLE_DIR)/playbook.yml
-DEPLOY_PLAYBOOK ?= $(ANSIBLE_DIR)/deploy.yml
-PROMETHEUS_PLAYBOOK ?= $(ANSIBLE_DIR)/prometheus.yml
-PROMETHEUS_CHECK_PLAYBOOK ?= $(ANSIBLE_DIR)/prometheus-check.yml
-LOKI_CHECK_PLAYBOOK ?= $(ANSIBLE_DIR)/loki-check.yml
-GRAFANA_CHECK_PLAYBOOK ?= $(ANSIBLE_DIR)/grafana-check.yml
-REQUIREMENTS_FILE ?= $(ANSIBLE_DIR)/requirements.yml
+INVENTORY ?= $(INVENTORY_DIR)/production.ini
+PREPARE_PLAYBOOK ?= $(PLAYBOOK_DIR)/playbook.yml
+DEPLOY_PLAYBOOK ?= $(PLAYBOOK_DIR)/deploy.yml
+PROMETHEUS_PLAYBOOK ?= $(PLAYBOOK_DIR)/prometheus.yml
+PROMETHEUS_CHECK_PLAYBOOK ?= $(PLAYBOOK_DIR)/prometheus-check.yml
+LOKI_CHECK_PLAYBOOK ?= $(PLAYBOOK_DIR)/loki-check.yml
+GRAFANA_CHECK_PLAYBOOK ?= $(PLAYBOOK_DIR)/grafana-check.yml
+REQUIREMENTS_FILE ?= requirements.yml
 PYTHON_REQUIREMENTS_FILE ?= requirements-dev.txt
 APP_GROUP ?= app
 MONITORING_GROUP ?= monitoring
@@ -29,6 +32,9 @@ LOKI_CONTAINER_NAME ?= loki
 PROMTAIL_CONTAINER_NAME ?= promtail
 GRAFANA_CONTAINER_NAME ?= grafana
 IMAGE_TAG ?=
+
+export ANSIBLE_CONFIG := $(abspath $(ANSIBLE_CONFIG_FILE))
+export ANSIBLE_HOME := $(abspath .ansible)
 
 .PHONY: install vault-encrypt lint syntax test ping smoke prepare deploy rollback check health metrics \
 	node-metrics nginx-status nginx-metrics nginx-exporter-logs logs \

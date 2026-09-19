@@ -13,7 +13,10 @@
       ansible.builtin.command:
         argv:
           - date
-          - +%s%N
+          # Nginx $time_iso8601 has one-second precision. Starting the Loki
+          # range at the exact nanosecond could exclude a marker written in
+          # the same second but timestamped at its beginning.
+          - +%s000000000
       register: loki_check_started_at
       changed_when: false
 

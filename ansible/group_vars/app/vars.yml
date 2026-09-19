@@ -106,7 +106,7 @@ nginx_log_format: |-
 nginx_application_vhosts:
   - server_name: "{{ deploy_domains | join(' ') }}"
     filename: project-devops-deploy.conf
-    template: "{{ playbook_dir }}/templates/project-devops-deploy.conf.j2"
+    template: "{{ playbook_dir }}/../templates/project-devops-deploy.conf.j2"
   - server_name: "{{ deploy_domains | join(' ') }}"
     filename: project-devops-deploy-https.conf
     state: absent

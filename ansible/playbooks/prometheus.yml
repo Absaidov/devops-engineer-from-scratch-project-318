@@ -13,7 +13,8 @@
           - "'0.0.0.0/0' not in monitoring_allowed_cidrs"
           - "'::/0' not in monitoring_allowed_cidrs"
         fail_msg: >-
-          Add a monitoring host with private_ip to ansible/inventory.ini.
+          Add a monitoring host with private_ip to
+          ansible/inventories/production.ini.
           Application metrics must never be open to the public Internet.
 
     - name: Allow the management proxy from Prometheus
@@ -83,7 +84,7 @@
           - hostvars[groups['app'][0]].private_ip | trim | length > 0
         fail_msg: >-
           Set private_ip for both app-server and monitoring-server in
-          ansible/inventory.ini.
+          ansible/inventories/production.ini.
 
     - name: Ensure the application metrics password is available
       ansible.builtin.assert:

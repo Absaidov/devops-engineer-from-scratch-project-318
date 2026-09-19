@@ -128,21 +128,15 @@ Docker, UFW, конфигурация и контейнеры Prometheus, Loki �
    по ключу. В Security Groups разрешите порты строго по таблице выше.
 5. Создайте A-записи домена на публичный IP `app-server`; дождитесь, пока
    `dig +short A <domain>` начнёт возвращать этот адрес.
-6. Создайте локальный inventory, выполните `make install`, затем заполните
+6. Обновите адреса ВМ в inventory, выполните `make install`, затем заполните
    открытые переменные и создайте Vault-файлы по примерам.
 7. Подготовьте сервер приложения, разверните приложение и после него стек
    наблюдаемости.
 8. Запустите статические и сквозные проверки. Финальный `make smoke` должен
    завершиться без `failed` и `unreachable`.
 
-Все команды ниже выполняются из корня репозитория. Сначала создайте локальный
-inventory:
-
-```bash
-cp ansible/inventory.ini.example ansible/inventory.ini
-```
-
-Заполните публичные и приватные адреса обеих ВМ:
+Все команды ниже выполняются из корня репозитория. Проверьте публичные и
+приватные адреса обеих ВМ в `ansible/inventories/production.ini`:
 
 ```ini
 [app]
@@ -153,7 +147,10 @@ monitoring-server ansible_host=<monitoring-public-ip> private_ip=<monitoring-pri
 ```
 
 `ansible_host` используется Ansible для SSH, а `private_ip` — для сбора метрик
-внутри облачной сети. Локальный `ansible/inventory.ini` игнорируется Git.
+внутри облачной сети. Файл `production.ini` описывает текущий учебный стенд и
+не содержит секретов. Для отдельного локального стенда можно скопировать
+`production.ini.example` в игнорируемый Git файл `local.ini` и запускать цели
+как `make deploy INVENTORY=ansible/inventories/local.ini`.
 
 Установите локальное Python-окружение, Ansible, линтер, роли и коллекции:
 
@@ -832,16 +829,23 @@ Nginx находятся в Loki. После этого в Grafana следуе�
 
 ## Структура Ansible
 
-Все Ansible-файлы находятся в директории `ansible/`:
+Основная Ansible-конфигурация находится в директории `ansible/`, а общий файл
+зависимостей — в корне репозитория:
 
-- `ansible/playbook.yml` — подготовка целевого сервера;
-- `ansible/deploy.yml` — деплой приложения, Nginx и HTTPS;
-- `ansible/prometheus.yml` — подготовка ВМ наблюдаемости и деплой Prometheus
-  с Grafana;
-- `ansible/prometheus-check.yml` — проверка конфигурации и scrape targets;
-- `ansible/grafana-check.yml` — проверка Grafana, datasource'ов, дашбордов и
-  alerting-ресурсов;
-- `ansible/loki-check.yml` — сквозная проверка доставки JSON-логов в Loki;
+- `ansible/ansible.cfg` — inventory по умолчанию и пути поиска ролей;
+- `ansible/inventories/production.ini.example` — пример inventory с группами
+  `app` и `monitoring`;
+- `ansible/inventories/production.ini` — inventory текущего учебного стенда;
+- `ansible/playbooks/playbook.yml` — подготовка целевого сервера;
+- `ansible/playbooks/deploy.yml` — деплой приложения, Nginx и HTTPS;
+- `ansible/playbooks/prometheus.yml` — подготовка ВМ наблюдаемости и деплой
+  Prometheus, Loki и Grafana;
+- `ansible/playbooks/prometheus-check.yml` — проверка конфигурации и scrape
+  targets;
+- `ansible/playbooks/grafana-check.yml` — проверка Grafana, datasource'ов,
+  дашбордов и alerting-ресурсов;
+- `ansible/playbooks/loki-check.yml` — сквозная проверка доставки JSON-логов в
+  Loki;
 - `ansible/roles/deploy/` — роль приложения и миграций;
 - `ansible/roles/node_exporter/` — установка и настройка Node Exporter;
 - `ansible/roles/nginx_exporter/` — контейнер Nginx Prometheus Exporter и
@@ -857,8 +861,8 @@ Nginx находятся в Loki. После этого в Grafana следуе�
 - `ansible/group_vars/monitoring/vault.yml` — зашифрованные пароли Grafana и
   SMTP;
 - `ansible/group_vars/app/vault.yml` — зашифрованные секреты;
-- `ansible/requirements.yml` — зафиксированные роли и коллекции;
 - `ansible/templates/` — Jinja2-шаблон Nginx.
+- `requirements.yml` — зафиксированные сторонние роли и коллекции.
 
 Конфигурация `ansible-lint` находится в `.ansible-lint`, а закреплённые
 Python-зависимости для локального `.venv` — в `requirements-dev.txt`.

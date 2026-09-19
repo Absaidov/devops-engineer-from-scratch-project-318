@@ -3,7 +3,7 @@
   ansible.builtin.assert:
     that:
       - groups.get('monitoring', []) | length > 0
-    fail_msg: Add a monitoring host to ansible/inventory.ini.
+    fail_msg: Add a monitoring host to ansible/inventories/production.ini.
 
 - name: Validate the Promtail destination and labels
   ansible.builtin.assert:
